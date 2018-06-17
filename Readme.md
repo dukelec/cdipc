@@ -23,6 +23,9 @@ The max data size of each node in each channel are the same.
 
 <img src="docs/img/cdipc-data-structure.svg" style="max-width:100%">
 
+Currently we use a single conditional variable instead of all semaphores for simplification.
+
+
 ### Core Procedures
 
 #### Topic
@@ -50,6 +53,12 @@ For use as service, only one replier is allowed.
 
  - We could implement the channel data structure inside a centra server application, for cross platform purpose.
  - We could use different daemon application to export Topic and Service channel to different interface protocol, e.g. websocket, TCP/UDP socket, unix socket.
+
+#### Logging
+
+Use a stand alone topic for logging, when anyone call the library's API to put or get a node, the library use the node's index number as an id, write the id and topic path into log node, and copy part of data to log node, then send the log node to log topic.
+
+To save full data for big data size topic, you can simply add a subscriber for debug in that topic.
 
 
 ## License
