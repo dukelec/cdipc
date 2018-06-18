@@ -62,8 +62,7 @@ To save full data for big data size topic, you can simply add a subscriber for d
 
 
 ## License
-```
-This Source Code Form is subject to the terms of the Mozilla
-Public License, v. 2.0. If a copy of the MPL was not distributed
-with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
-```
+
+The MIT License (MIT)
+https://rem.mit-license.org/
+
