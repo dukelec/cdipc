@@ -14,44 +14,32 @@
 
 #include "cdipc.h"
 
-static void cdipc_get_full_path(char *fpath, const char *rpath)
-{
-    char *base_path = getenv("CDIPC_BASE_PATH");
-    if (base_path == NULL)
-        base_path = "/tmp/cdipc/";
-    snprintf(fpath, PATH_MAX, "%s%s", base_path, rpath);
-}
-
-
-int cdipc_create(const char *rpath, cdipc_type_t type,
-        int pub_amount, int sub_amount,
-        int nd_amount, size_t max_dat_len)
+int cdipc_create(const char *name, cdipc_type_t type,
+        int max_pub, int max_sub, int max_nd, size_t max_len)
 {
     int i, r;
-    char fpath[PATH_MAX];
     cdipc_ch_t _ch;
     cdipc_ch_t *ch = &_ch;
 
-    if (!pub_amount || !sub_amount || !nd_amount || !max_dat_len) {
+    if (!max_pub || !max_sub || !max_nd || !max_len) {
         df_error("zero arguments detected\n");
         return -1;
     }
-    if (type == CDIPC_SERVICE && sub_amount != 1) {
-        df_error("sub_amount must be 1 for service\n");
+    if (type == CDIPC_SERVICE && max_sub != 1) {
+        df_error("max_sub must be 1 for service\n");
         return -1;
     }
 
     memset(ch, 0, sizeof(cdipc_ch_t));
     ch->map_len = sizeof(cdipc_hdr_t) +
-            sizeof(cdipc_pub_t) * pub_amount +
-            sizeof(cdipc_sub_t) * sub_amount +
-            (sizeof(cdipc_nd_t) + max_dat_len) * nd_amount;
-    strncpy(ch->rpath, rpath, PATH_MAX);
-    cdipc_get_full_path(fpath, rpath);
+            sizeof(cdipc_pub_t) * max_pub +
+            sizeof(cdipc_sub_t) * max_sub +
+            (sizeof(cdipc_nd_t) + max_len) * max_nd;
+    strncpy(ch->name, name, NAME_MAX);
 
-    ch->fd = shm_open(fpath, O_CREAT | O_EXCL | O_RDWR | O_TRUNC, S_IRWXU | S_IRWXG);
+    ch->fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR | O_TRUNC, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
-        df_error("shm_open, ret code: %d\n", ch->fd);
+        df_error("shm_open: %s, ret code: %d\n", name, ch->fd);
         return ch->fd;
     }
 
@@ -69,10 +57,10 @@ int cdipc_create(const char *rpath, cdipc_type_t type,
 
     memset(ch->hdr, 0, sizeof(cdipc_hdr_t));
     ch->hdr->type = type;
-    ch->hdr->pub_amount = pub_amount;
-    ch->hdr->sub_amount = sub_amount;
-    ch->hdr->nd_amount = nd_amount;
-    ch->hdr->max_dat_len = max_dat_len;
+    ch->hdr->max_pub = max_pub;
+    ch->hdr->max_sub = max_sub;
+    ch->hdr->max_nd = max_nd;
+    ch->hdr->max_len = max_len;
 
     pthread_mutexattr_t mutexattr;
     if ((r = pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED))) {
@@ -120,22 +108,22 @@ int cdipc_create(const char *rpath, cdipc_type_t type,
         return -1;
     }
 
-    ch->pubs = (void *) ch->hdr + sizeof(cdipc_hdr_t);
-    ch->subs = (void *) ch->pubs + sizeof(cdipc_pub_t) * pub_amount;
-    cdipc_nd_t *nds = (void *) ch->subs + sizeof(cdipc_sub_t) * sub_amount;
+    ch->pubs = (void *)ch->hdr + sizeof(cdipc_hdr_t);
+    ch->subs = (void *)ch->pubs + sizeof(cdipc_pub_t) * max_pub;
+    cdipc_nd_t *nds = (void *)ch->subs + sizeof(cdipc_sub_t) * max_sub;
 
-    for (i = 0; i < pub_amount; i++) {
-        cdipc_pub_t *pub = ch->pubs + sizeof(cdipc_pub_t) * i;
+    for (i = 0; i < max_pub; i++) {
+        cdipc_pub_t *pub = ch->pubs + i;
         memset(pub, 0, sizeof(cdipc_pub_t));
         pub->id = i;
     }
-    for (i = 0; i < sub_amount; i++) {
-        cdipc_sub_t *sub = ch->subs + sizeof(cdipc_sub_t) * i;
+    for (i = 0; i < max_sub; i++) {
+        cdipc_sub_t *sub = ch->subs + i;
         memset(sub, 0, sizeof(cdipc_sub_t));
         sub->id = i;
     }
-    for (i = 0; i < nd_amount; i++) {
-        cdipc_nd_t *nd = nds + (sizeof(cdipc_nd_t) + max_dat_len) * i;
+    for (i = 0; i < max_nd; i++) {
+        cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + max_len) * i;
         memset(nd, 0, sizeof(cdipc_nd_t));
         nd->id = i;
         list_put(&ch->hdr->free, &nd->node);
@@ -145,13 +133,11 @@ int cdipc_create(const char *rpath, cdipc_type_t type,
     return cdipc_close(ch);
 }
 
-int cdipc_unlink(const char *rpath)
+int cdipc_unlink(const char *name)
 {
     int r;
-    char fpath[PATH_MAX];
-    cdipc_get_full_path(fpath, rpath);
 
-    if ((r = shm_unlink(fpath))) {
+    if ((r = shm_unlink(name))) {
         df_error("shm_unlink\n");
         return -1;
     }
@@ -159,17 +145,13 @@ int cdipc_unlink(const char *rpath)
 }
 
 
-int cdipc_open(cdipc_ch_t *ch, const char *rpath,
+int cdipc_open(cdipc_ch_t *ch, const char *name,
         cdipc_role_t role, int id)
 {
-    char fpath[PATH_MAX];
-
     memset(ch, 0, sizeof(cdipc_ch_t));
-    strncpy(ch->rpath, rpath, PATH_MAX);
-    cdipc_get_full_path(fpath, rpath);
+    strncpy(ch->name, name, NAME_MAX);
 
-
-    ch->fd = shm_open(fpath, O_RDWR, S_IRWXU | S_IRWXG);
+    ch->fd = shm_open(name, O_RDWR, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
         df_error("shm_open, ret code: %d\n", ch->fd);
         return ch->fd;
@@ -188,9 +170,9 @@ int cdipc_open(cdipc_ch_t *ch, const char *rpath,
     }
 
     ch->map_len = sizeof(cdipc_hdr_t) +
-            sizeof(cdipc_pub_t) * ch->hdr->pub_amount +
-            sizeof(cdipc_sub_t) * ch->hdr->sub_amount +
-            (sizeof(cdipc_nd_t) + ch->hdr->max_dat_len) * ch->hdr->nd_amount;
+            sizeof(cdipc_pub_t) * ch->hdr->max_pub +
+            sizeof(cdipc_sub_t) * ch->hdr->max_sub +
+            (sizeof(cdipc_nd_t) + ch->hdr->max_len) * ch->hdr->max_nd;
 
     if (-1 == munmap(ch->hdr, sizeof(cdipc_hdr_t))) {
         df_error("munmap\n");
@@ -204,8 +186,8 @@ int cdipc_open(cdipc_ch_t *ch, const char *rpath,
         return -1;
     }
 
-    ch->pubs = (void *) ch->hdr + sizeof(cdipc_hdr_t);
-    ch->subs = (void *) ch->pubs + sizeof(cdipc_pub_t) * ch->hdr->pub_amount;
+    ch->pubs = (void *)ch->hdr + sizeof(cdipc_hdr_t);
+    ch->subs = (void *)ch->pubs + sizeof(cdipc_pub_t) * ch->hdr->max_pub;
     ch->role = role;
 
     if (role == CDIPC_PUB) {
@@ -289,7 +271,7 @@ int cdipc_put(cdipc_ch_t *ch, const struct timespec *abstime)
 
     while (true) {
         bool need_wait = false;
-        for (i = 0; i < hdr->sub_amount; i++) {
+        for (i = 0; i < hdr->max_sub; i++) {
             cdipc_sub_t *sub = ch->subs + i;
             if (sub->need_wait && sub->pend.len == sub->max_len) {
                 need_wait = true;
@@ -310,7 +292,7 @@ int cdipc_put(cdipc_ch_t *ch, const struct timespec *abstime)
 
     if (r == 0) {
         pub->cur->ref = 0;
-        for (i = 0; i < hdr->sub_amount; i++) {
+        for (i = 0; i < hdr->max_sub; i++) {
             cdipc_sub_t *sub = ch->subs + i;
             if (sub->pend.len == sub->max_len) {
                 cdipc_nd_t *nd = list_get_entry(&sub->pend, cdipc_nd_t);

@@ -53,10 +53,10 @@ typedef struct {
     uint32_t        magic;
     cdipc_type_t    type;
 
-    int             pub_amount;
-    int             sub_amount;
-    int             nd_amount;
-    size_t          max_dat_len;
+    int             max_pub;
+    int             max_sub;
+    int             max_nd;
+    size_t          max_len;
 
     pthread_mutex_t mutex;
     pthread_cond_t  cond;
@@ -68,7 +68,7 @@ typedef struct {
 
 typedef struct {
     int             fd;
-    char            rpath[PATH_MAX]; // related path
+    char            name[NAME_MAX];
     cdipc_hdr_t     *hdr;
     size_t          map_len;
 
@@ -81,12 +81,10 @@ typedef struct {
 } cdipc_ch_t;
 
 
-int cdipc_create(const char *rpath, cdipc_type_t type,
-        int pub_amount, int sub_amount,
-        int nd_amount, size_t max_dat_len);
-int cdipc_unlink(const char *rpath);
-int cdipc_open(cdipc_ch_t *ch, const char *rpath,
-        cdipc_role_t role, int id);
+int cdipc_create(const char *name, cdipc_type_t type,
+        int max_pub, int max_sub, int max_nd, size_t max_len);
+int cdipc_unlink(const char *name);
+int cdipc_open(cdipc_ch_t *ch, const char *name, cdipc_role_t role, int id);
 int cdipc_close(cdipc_ch_t *ch);
 
 #endif

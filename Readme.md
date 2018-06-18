@@ -63,6 +63,6 @@ To save full data for big data size topic, you can simply add a subscriber for d
 
 ## License
 
-The MIT License (MIT)
-https://rem.mit-license.org/
+The MIT License (MIT)  
+https://rem.mit-license.org
 
