@@ -13,7 +13,9 @@
 #include <fcntl.h>
 #include <assert.h>
 
-#define DEBUG
+#include "cd_utils.h"
+#include "cd_debug.h"
+#include "rlist.h"
 #include "cdipc.h"
 #include "cd_time.h"
 

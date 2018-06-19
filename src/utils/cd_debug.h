@@ -7,8 +7,8 @@
  * Author: Duke Fong <duke@dukelec.com>
  */
 
-#ifndef __DEBUG_H__
-#define __DEBUG_H__
+#ifndef __CD_DEBUG_H__
+#define __CD_DEBUG_H__
 
 #ifndef dprintf
 #define dprintf(fmt, ...)           printf(fmt, ## __VA_ARGS__)

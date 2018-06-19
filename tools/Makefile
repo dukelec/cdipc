@@ -9,12 +9,13 @@
 
 INCLUDES = \
 ../src \
-../src/utils
+../src/utils \
+./
 
 C_SOURCES = \
 cdipc_tool.c \
 ../src/cdipc.c \
-../src/utils/list.c
+../src/utils/rlist.c
 
 
 GIT_VERSION := $(shell git describe --dirty --always --tags)

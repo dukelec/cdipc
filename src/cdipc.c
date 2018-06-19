@@ -12,6 +12,9 @@
 #include <fcntl.h>
 #include <assert.h>
 
+#include "cd_utils.h"
+#include "cd_debug.h"
+#include "rlist.h"
 #include "cdipc.h"
 
 int cdipc_create(const char *name, cdipc_type_t type,
@@ -130,7 +133,7 @@ int cdipc_create(const char *name, cdipc_type_t type,
         cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + max_len) * i;
         memset(nd, 0, sizeof(cdipc_nd_t));
         nd->id = i;
-        list_put(&ch->hdr->free, &nd->node);
+        rlist_put(ch->hdr, &ch->hdr->free, &nd->node);
     }
 
     ch->hdr->magic = CDIPC_MAGIC_NUM;
@@ -243,7 +246,7 @@ int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
     }
 
     pthread_mutex_lock(&hdr->mutex);
-    while (!(pub->cur = list_get_entry(&hdr->free, cdipc_nd_t))) {
+    while (!(pub->cur = rlist_get_entry(hdr, &hdr->free, cdipc_nd_t))) {
         r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
@@ -297,15 +300,19 @@ int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
         pub->cur->ref = 0;
         for (i = 0; i < hdr->max_sub; i++) {
             cdipc_sub_t *sub = ch->subs + i;
-            if (sub->pend.len == sub->max_len) {
-                cdipc_nd_t *nd = list_get_entry(&sub->pend, cdipc_nd_t);
-                nd->owner = -1;
-                list_put(&hdr->free, &nd->node);
-            }
             if (sub->max_len != 0) {
-                list_put(&sub->pend, &pub->cur->node);
+                if (sub->pend.len == sub->max_len) {
+                    cdipc_nd_t *nd = rlist_get_entry(hdr, &sub->pend, cdipc_nd_t);
+                    nd->owner = -1;
+                    rlist_put(hdr, &hdr->free, &nd->node);
+                }
+                rlist_put(hdr, &sub->pend, &pub->cur->node);
                 pub->cur->ref++;
             }
+        }
+        if (!pub->cur->ref) {
+            dnf_debug(ch->name, "drop\n");
+            rlist_put(hdr, &hdr->free, &pub->cur->node);
         }
         pub->cur = NULL;
     }
@@ -350,7 +357,7 @@ int cdipc_pub_free(cdipc_ch_t *ch)
     }
     pthread_mutex_lock(&hdr->mutex);
     pub->ans->owner = -1;
-    list_put(&hdr->free, &pub->ans->node);
+    rlist_put(hdr, &hdr->free, &pub->ans->node);
     pub->ans = NULL;
     pthread_mutex_unlock(&hdr->mutex);
     return 0;
@@ -368,7 +375,7 @@ int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     pthread_mutex_lock(&hdr->mutex);
 
 pick_node:
-    while (!(sub->cur = list_get_entry(&sub->pend, cdipc_nd_t))) {
+    while (!(sub->cur = rlist_get_entry(hdr, &sub->pend, cdipc_nd_t))) {
         r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
@@ -380,7 +387,7 @@ pick_node:
 
     if (r == 0 && sub->cur->owner < 0) {
         if (--sub->cur->ref <= 0) {
-            list_put(&hdr->free, &sub->cur->node);
+            rlist_put(hdr, &hdr->free, &sub->cur->node);
         }
         sub->cur = NULL;
         df_debug("avoid cancelled node\n");
@@ -409,7 +416,7 @@ int cdipc_sub_ret(cdipc_ch_t *ch)
         df_debug("avoid cancelled node\n");
         if (--sub->cur->ref != 0)
             df_warn("ref not zero: %d\n", sub->cur->ref);
-        list_put(&hdr->free, &sub->cur->node);
+        rlist_put(hdr, &hdr->free, &sub->cur->node);
         sub->cur = NULL;
     } else {
         cdipc_pub_t *pub = ch->pubs + sub->cur->owner;
@@ -438,7 +445,7 @@ int cdipc_sub_free(cdipc_ch_t *ch)
     }
     pthread_mutex_lock(&hdr->mutex);
     if (--sub->cur->ref <= 0) {
-        list_put(&hdr->free, &sub->cur->node);
+        rlist_put(hdr, &hdr->free, &sub->cur->node);
     }
     sub->cur = NULL;
     pthread_mutex_unlock(&hdr->mutex);

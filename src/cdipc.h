@@ -10,8 +10,6 @@
 #ifndef __CDIPC_H__
 #define __CDIPC_H__
 
-#include "cd_utils.h"
-
 #define CDIPC_MAGIC_NUM 0xcdcd0001
 
 
@@ -27,7 +25,7 @@ typedef enum {
 
 
 typedef struct {
-    list_node_t     node;
+    rlist_node_t    node;
     int             id;
     int             ref;    // reference count
     int             owner;  // pub's id
@@ -46,7 +44,7 @@ typedef struct {
     int             max_len;
     bool            need_wait;
     cdipc_nd_t      *cur;
-    list_head_t     pend;
+    rlist_head_t    pend;
 } cdipc_sub_t;
 
 typedef struct {
@@ -61,7 +59,7 @@ typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t  cond;
 
-    list_head_t     free;
+    rlist_head_t    free;
 } cdipc_hdr_t;
 
 
