@@ -35,15 +35,15 @@ typedef struct {
 
 typedef struct {
     int             id;
-    cdipc_nd_t      *cur;
-    cdipc_nd_t      *ans;
+    cdipc_nd_t      *r_cur;
+    cdipc_nd_t      *r_ans;
 } cdipc_pub_t;
 
 typedef struct {
     int             id;
     int             max_len;
     bool            need_wait;
-    cdipc_nd_t      *cur;
+    cdipc_nd_t      *r_cur;
     rlist_head_t    pend;
 } cdipc_sub_t;
 
@@ -78,6 +78,20 @@ typedef struct {
     cdipc_sub_t     *sub;   // owner self if owner is sub
 } cdipc_ch_t;
 
+
+
+static cdipc_nd_t *cd_nd2r(const void *base, cdipc_nd_t *nd)
+{
+    if (nd == NULL)
+        return NULL;
+    return (void *)nd - (ptrdiff_t)base;
+}
+static cdipc_nd_t *cd_r2nd(const void *base, cdipc_nd_t *nd)
+{
+    if (nd == NULL)
+        return NULL;
+    return (void *)nd + (ptrdiff_t)base;
+}
 
 int cdipc_create(const char *name, cdipc_type_t type,
         int max_pub, int max_sub, int max_nd, size_t max_len);

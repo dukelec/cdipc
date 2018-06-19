@@ -227,8 +227,8 @@ int cmd_put(int argc, char **argv)
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_pub_t *pub = ch->pub;
 
-    strcpy(pub->cur->dat, dat);
-    pub->cur->len = strlen(dat);
+    strcpy(cd_r2nd(hdr, pub->r_cur)->dat, dat);
+    cd_r2nd(hdr, pub->r_cur)->len = strlen(dat);
 
     if ((r = cdipc_pub_put(ch, &abstime))) {
         return -1;
@@ -238,7 +238,7 @@ int cmd_put(int argc, char **argv)
         if ((r = cdipc_pub_get(ch, &abstime))) {
             return -1;
         }
-        printf("ret: %s\n", pub->ans->dat);
+        printf("ret: %s\n", cd_r2nd(hdr, pub->r_ans)->dat);
         if ((r = cdipc_pub_free(ch))) {
             return -1;
         }
@@ -321,7 +321,7 @@ int cmd_get(int argc, char **argv)
     if ((r = cdipc_sub_get(ch, &abstime))) {
         return -1;
     }
-    printf("get: %s\n", sub->cur->dat);
+    printf("get: %s\n", cd_r2nd(hdr, sub->r_cur)->dat);
 
     if (hdr->type != CDIPC_SERVICE) {
         if ((r = cdipc_sub_free(ch))) {
@@ -402,8 +402,8 @@ int cmd_ret(int argc, char **argv)
         dnf_error(name, "not service\n");
         return -1;
     }
-    strcpy(sub->cur->dat, dat);
-    sub->cur->len = strlen(dat);
+    strcpy(cd_r2nd(hdr, sub->r_cur)->dat, dat);
+    cd_r2nd(hdr, sub->r_cur)->len = strlen(dat);
 
     if ((r = cdipc_sub_ret(ch))) {
         return -1;
@@ -551,20 +551,23 @@ int cmd_dump(int argc, char **argv)
 
     for (i = 0; i < hdr->max_pub; i++) {
         cdipc_pub_t *pub = ch->pubs + i;
+        cdipc_nd_t *cur = cd_r2nd(hdr, pub->r_cur);
+        cdipc_nd_t *ans = cd_r2nd(hdr, pub->r_ans);
         printf("pub %d: cur: %d, ans: %d\n", pub->id,
-                pub->cur ? pub->cur->id : -1, pub->ans ? pub->ans->id : -1);
-        if (pub->cur) {
-            printf("  cur id: %d, len: %ld\n", pub->cur->id, pub->cur->len);
+                cur ? cur->id : -1, ans ? ans->id : -1);
+        if (cur) {
+            printf("  cur id: %d, len: %ld\n", cur->id, cur->len);
         }
-        if (pub->ans) {
-            printf("  ans id: %d, len: %ld\n", pub->ans->id, pub->ans->len);
+        if (ans) {
+            printf("  ans id: %d, len: %ld\n", ans->id, ans->len);
         }
     }
 
     for (i = 0; i < hdr->max_sub; i++) {
         cdipc_sub_t *sub = ch->subs + i;
+        cdipc_nd_t *cur = cd_r2nd(hdr, sub->r_cur);
         printf("sub %d: cur: %d, pend: %d, need_wait: %d, max_len: %d\n",
-                sub->id, sub->cur ? sub->cur->id : -1, sub->pend.len,
+                sub->id, cur ? cur->id : -1, sub->pend.len,
                         sub->need_wait, sub->max_len);
         rlist_node_t *rnode, *node;
         for (rnode = sub->pend.rfirst; rnode != NULL; rnode = node->rnext) {
