@@ -76,8 +76,8 @@
     })
 
 
-#if __has_include("common_prepend.h")
-#include "common_prepend.h"
+#if __has_include("cd_utils_prepend.h")
+#include "cd_utils_prepend.h"
 #endif
 
 #if __has_include("arch_wrapper.h")
@@ -92,8 +92,8 @@
 #include "debug.h"
 #endif
 
-#if __has_include("common_append.h")
-#include "common_append.h"
+#if __has_include("cd_utils_append.h")
+#include "cd_utils_append.h"
 #endif
 
 #endif

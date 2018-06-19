@@ -22,11 +22,11 @@ int cdipc_create(const char *name, cdipc_type_t type,
     cdipc_ch_t *ch = &_ch;
 
     if (!max_pub || !max_sub || !max_nd || !max_len) {
-        df_error("zero arguments detected\n");
+        dnf_error(name, "zero arguments detected\n");
         return -1;
     }
     if (type == CDIPC_SERVICE && max_sub != 1) {
-        df_error("max_sub must be 1 for service\n");
+        dnf_error(name, "max_sub must be 1 for service\n");
         return -1;
     }
 
@@ -39,19 +39,19 @@ int cdipc_create(const char *name, cdipc_type_t type,
 
     ch->fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR | O_TRUNC, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
-        df_error("shm_open: %s, ret code: %d\n", name, ch->fd);
+        dnf_error(ch->name, "shm_open: %s, ret code: %d\n", name, ch->fd);
         return ch->fd;
     }
 
     if (ftruncate(ch->fd, ch->map_len) == -1) {
-        df_error("ftruncate to size %ld\n", ch->map_len);
+        dnf_error(ch->name, "ftruncate to size %ld\n", ch->map_len);
         return -1;
     }
 
     ch->hdr = (cdipc_hdr_t*) mmap(NULL, ch->map_len,
             PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
     if (ch->hdr == MAP_FAILED) {
-        df_error("mmap\n");
+        dnf_error(ch->name, "mmap\n");
         return -1;
     }
 
@@ -64,47 +64,51 @@ int cdipc_create(const char *name, cdipc_type_t type,
 
     pthread_mutexattr_t mutexattr;
     if ((r = pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED))) {
-        df_error("pthread_mutexattr_setpshared\n");
+        dnf_error(ch->name, "pthread_mutexattr_setpshared\n");
         return -1;
     }
 #ifdef HAVE_MUTEX_PRIORITY_INHERIT
     if ((r = pthread_mutexattr_setprotocol(&mutexattr, PTHREAD_PRIO_INHERIT))) {
-        df_error("pthread_mutexattr_setprotocol");
+        dnf_error(ch->name, "pthread_mutexattr_setprotocol");
         return -1;
     }
 #endif
 #ifdef HAVE_MUTEX_ROBUST
     if ((r = pthread_mutexattr_setrobust(&mutexattr, PTHREAD_MUTEX_ROBUST))) {
-        df_error("pthread_mutexattr_setrobust");
+        dnf_error(ch->name, "pthread_mutexattr_setrobust");
         return -1;
     }
 #endif
 #if defined (HAVE_MUTEX_ERROR_CHECK) && defined (DEBUG)
     if ((r = pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_ERRORCHECK))) {
-        df_error("pthread_mutexattr_settype");
+        dnf_error(ch->name, "pthread_mutexattr_settype");
         return -1;
     }
 #endif
     if ((r = pthread_mutex_init(&ch->hdr->mutex, &mutexattr))) {
-        df_error("pthread_mutex_init\n");
+        dnf_error(ch->name, "pthread_mutex_init\n");
         return -1;
     }
     if ((r = pthread_mutexattr_destroy(&mutexattr))) {
-        df_error("pthread_mutexattr_destroy\n");
+        dnf_error(ch->name, "pthread_mutexattr_destroy\n");
         return -1;
     }
 
     pthread_condattr_t condattr;
     if ((r = pthread_condattr_setpshared(&condattr, PTHREAD_PROCESS_SHARED))) {
-        df_error("pthread_condattr_setpshared\n");
+        dnf_error(ch->name, "pthread_condattr_setpshared\n");
+        return -1;
+    }
+    if ((r = pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC))) {
+        dnf_error(ch->name, "pthread_condattr_setclock\n");
         return -1;
     }
     if ((r = pthread_cond_init(&ch->hdr->cond, &condattr))) {
-        df_error("pthread_cond_init\n");
+        dnf_error(ch->name, "pthread_cond_init\n");
         return -1;
     }
     if ((r = pthread_condattr_destroy(&condattr))) {
-        df_error("pthread_condattr_destroy\n");
+        dnf_error(ch->name, "pthread_condattr_destroy\n");
         return -1;
     }
 
@@ -138,7 +142,7 @@ int cdipc_unlink(const char *name)
     int r;
 
     if ((r = shm_unlink(name))) {
-        df_error("shm_unlink\n");
+        dnf_error(name, "shm_unlink\n");
         return -1;
     }
     return 0;
@@ -153,18 +157,18 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
 
     ch->fd = shm_open(name, O_RDWR, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
-        df_error("shm_open, ret code: %d\n", ch->fd);
+        dnf_error(ch->name, "shm_open, ret code: %d\n", ch->fd);
         return ch->fd;
     }
 
     ch->hdr = (cdipc_hdr_t*) mmap(NULL, sizeof(cdipc_hdr_t),
             PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
     if (ch->hdr == MAP_FAILED) {
-        df_error("mmap\n");
+        dnf_error(ch->name, "mmap\n");
         return -1;
     }
     if (ch->hdr->magic != CDIPC_MAGIC_NUM) {
-        df_error("wrong magic num: %08x, expect: %08x\n",
+        dnf_error(ch->name, "wrong magic num: %08x, expect: %08x\n",
                 ch->hdr->magic, CDIPC_MAGIC_NUM);
         return -1;
     }
@@ -175,14 +179,14 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
             (sizeof(cdipc_nd_t) + ch->hdr->max_len) * ch->hdr->max_nd;
 
     if (-1 == munmap(ch->hdr, sizeof(cdipc_hdr_t))) {
-        df_error("munmap\n");
+        dnf_error(ch->name, "munmap\n");
         return -1;
     }
 
     ch->hdr = (cdipc_hdr_t*) mmap(NULL, ch->map_len,
             PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
     if (ch->hdr == MAP_FAILED) {
-        df_error("re-mmap\n");
+        dnf_error(ch->name, "re-mmap\n");
         return -1;
     }
 
@@ -202,13 +206,13 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
 int cdipc_close(cdipc_ch_t *ch)
 {
     if (munmap(ch->hdr, ch->map_len)) {
-        df_error("munmap\n");
+        dnf_error(ch->name, "munmap\n");
         return -1;
     }
     ch->hdr = NULL;
 
     if (close(ch->fd)) {
-        df_error("close fd\n");
+        dnf_error(ch->name, "close fd\n");
         return -1;
     }
     ch->fd = -1;
@@ -218,7 +222,7 @@ int cdipc_close(cdipc_ch_t *ch)
 
 // for pub:
 
-int cdipc_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
+int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
 {
     int r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
@@ -239,13 +243,12 @@ int cdipc_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
     }
 
     pthread_mutex_lock(&hdr->mutex);
-
     while (!(pub->cur = list_get_entry(&hdr->free, cdipc_nd_t))) {
         r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
-            df_error("cond_timedwait, ret: %d\n", r);
+            dnf_error(ch->name, "cond_timedwait, ret: %d\n", r);
             break;
         }
     }
@@ -255,7 +258,7 @@ int cdipc_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
     return r;
 }
 
-int cdipc_put(cdipc_ch_t *ch, const struct timespec *abstime)
+int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
@@ -263,7 +266,7 @@ int cdipc_put(cdipc_ch_t *ch, const struct timespec *abstime)
     assert(ch->role == CDIPC_PUB);
 
     if (!pub->cur) {
-        df_error("cur empty\n");
+        dnf_error(ch->name, "cur empty\n");
         return -1;
     }
 
@@ -285,7 +288,7 @@ int cdipc_put(cdipc_ch_t *ch, const struct timespec *abstime)
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
-            df_error("cond_timedwait, ret: %d\n", r);
+            dnf_error(ch->name, "cond_timedwait, ret: %d\n", r);
             break;
         }
     }
@@ -312,9 +315,50 @@ int cdipc_put(cdipc_ch_t *ch, const struct timespec *abstime)
     return r;
 }
 
+int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime)
+{
+    int i, r = 0;
+    cdipc_hdr_t *hdr = ch->hdr;
+    cdipc_pub_t *pub = ch->pub;
+    assert(ch->role == CDIPC_PUB);
+
+    pthread_mutex_lock(&hdr->mutex);
+
+    while (!pub->ans) {
+        r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        if (r == ETIMEDOUT) {
+            break;
+        } else if (r != 0) {
+            dnf_error(ch->name, "cond_timedwait, ret: %d\n", r);
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&hdr->mutex);
+    return r;
+}
+
+int cdipc_pub_free(cdipc_ch_t *ch)
+{
+    cdipc_hdr_t *hdr = ch->hdr;
+    cdipc_pub_t *pub = ch->pub;
+    assert(ch->role == CDIPC_PUB && hdr->type == CDIPC_SERVICE);
+
+    if (!pub->ans) {
+        dnf_error(ch->name, "pub->ans empty\n");
+        return -1;
+    }
+    pthread_mutex_lock(&hdr->mutex);
+    pub->ans->owner = -1;
+    list_put(&hdr->free, &pub->ans->node);
+    pub->ans = NULL;
+    pthread_mutex_unlock(&hdr->mutex);
+    return 0;
+}
+
 // for sub:
 
-int cdipc_get(cdipc_ch_t *ch, const struct timespec *abstime)
+int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
@@ -329,7 +373,7 @@ pick_node:
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
-            df_error("cond_timedwait, ret: %d\n", r);
+            dnf_error(ch->name, "cond_timedwait, ret: %d\n", r);
             break;
         }
     }
@@ -347,7 +391,7 @@ pick_node:
     return r;
 }
 
-int cdipc_response(cdipc_ch_t *ch)
+int cdipc_sub_ret(cdipc_ch_t *ch)
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
@@ -355,7 +399,7 @@ int cdipc_response(cdipc_ch_t *ch)
     assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_SERVICE);
 
     if (!sub->cur) {
-        df_error("cur empty\n");
+        dnf_error(ch->name, "cur empty\n");
         return -1;
     }
 
@@ -370,7 +414,7 @@ int cdipc_response(cdipc_ch_t *ch)
     } else {
         cdipc_pub_t *pub = ch->pubs + sub->cur->owner;
         if (pub->ans) {
-            df_error("pub->ans not empty\n");
+            dnf_error(ch->name, "pub->ans not empty\n");
             r = -1;
         } else {
             pub->ans = sub->cur;
@@ -382,39 +426,21 @@ int cdipc_response(cdipc_ch_t *ch)
     return r;
 }
 
-// for both:
-
-int cdipc_release(cdipc_ch_t *ch)
+int cdipc_sub_free(cdipc_ch_t *ch)
 {
     cdipc_hdr_t *hdr = ch->hdr;
+    cdipc_sub_t *sub = ch->sub;
+    assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_TOPIC);
 
-    if (ch->role == CDIPC_SUB) {
-        cdipc_sub_t *sub = ch->sub;
-        assert(hdr->type == CDIPC_TOPIC);
-        if (!sub->cur) {
-            df_error("sub->cur empty\n");
-            return -1;
-        }
-        pthread_mutex_lock(&hdr->mutex);
-        if (--sub->cur->ref <= 0) {
-            list_put(&hdr->free, &sub->cur->node);
-        }
-        sub->cur = NULL;
-        pthread_mutex_unlock(&hdr->mutex);
-
-    } else if (ch->role == CDIPC_PUB) {
-        cdipc_pub_t *pub = ch->pub;
-        assert(hdr->type == CDIPC_SERVICE);
-        if (!pub->ans) {
-            df_error("pub->ans empty\n");
-            return -1;
-        }
-        pthread_mutex_lock(&hdr->mutex);
-        pub->ans->owner = -1;
-        list_put(&hdr->free, &pub->ans->node);
-        pub->ans = NULL;
-        pthread_mutex_unlock(&hdr->mutex);
+    if (!sub->cur) {
+        dnf_error(ch->name, "sub->cur empty\n");
+        return -1;
     }
-
+    pthread_mutex_lock(&hdr->mutex);
+    if (--sub->cur->ref <= 0) {
+        list_put(&hdr->free, &sub->cur->node);
+    }
+    sub->cur = NULL;
+    pthread_mutex_unlock(&hdr->mutex);
     return 0;
 }

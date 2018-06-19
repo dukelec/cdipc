@@ -87,4 +87,12 @@ int cdipc_unlink(const char *name);
 int cdipc_open(cdipc_ch_t *ch, const char *name, cdipc_role_t role, int id);
 int cdipc_close(cdipc_ch_t *ch);
 
+int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime);
+int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime);
+int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime);
+int cdipc_pub_free(cdipc_ch_t *ch);
+int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime);
+int cdipc_sub_ret(cdipc_ch_t *ch);
+int cdipc_sub_free(cdipc_ch_t *ch);
+
 #endif
