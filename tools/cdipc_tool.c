@@ -413,6 +413,87 @@ int cmd_ret(int argc, char **argv)
 }
 
 
+enum OPT_PEND_CFG_IDX {
+    OPT_PEND_CFG_NAME = 1000,
+    OPT_PEND_CFG_ID,
+    OPT_PEND_CFG_WAIT,
+    OPT_PEND_CFG_MAX
+};
+
+static struct option opt_pend_cfg[] = {
+        { "name",       required_argument, NULL, OPT_PEND_CFG_NAME },
+        { "id",         required_argument, NULL, OPT_PEND_CFG_ID },
+        { "wait",       required_argument, NULL, OPT_PEND_CFG_WAIT },
+        { "max",        required_argument, NULL, OPT_PEND_CFG_MAX },
+        { 0, 0, 0, 0 }
+};
+
+int cmd_pend_cfg(int argc, char **argv)
+{
+    int r = 0;
+    cdipc_ch_t _ch = { 0 };
+    cdipc_ch_t *ch = &_ch;
+    char name[NAME_MAX] = { 0 };
+    int id = 0;
+    bool need_wait = false;
+    int pend_max = 2;
+
+    while (true) {
+        int option = getopt_long(argc, argv, "", opt_pend_cfg, NULL);
+        if (option == -1) {
+            if (optind < argc) {
+                printf ("non-option argv-elements: ");
+                while (optind < argc)
+                    printf ("%s ", argv[optind++]);
+                putchar ('\n');
+            }
+            break;
+        }
+        switch (option) {
+        case OPT_PEND_CFG_NAME:
+            strncpy(name, optarg, NAME_MAX);
+            df_debug("set name: %s\n", name);
+            break;
+        case OPT_PEND_CFG_ID:
+            id = atol(optarg);
+            df_debug("set id: %d\n", id);
+            break;
+        case OPT_PEND_CFG_WAIT:
+            if (0 == strcasecmp(optarg, "true")) {
+                need_wait = true;
+                df_debug("set need_wait: true\n");
+            } else {
+                df_debug("keep need_wait: false\n");
+            }
+            break;
+        case OPT_PEND_CFG_MAX:
+            pend_max = atol(optarg);
+            df_debug("set pend_max: %d\n", pend_max);
+            break;
+        case 0:
+        case '?':
+        default:
+            break;
+        }
+    }
+    if (!strlen(name)) {
+        df_error("--name must specified\n");
+        return -1;
+    }
+
+    if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
+        return -1;
+    }
+
+    cdipc_hdr_t *hdr = ch->hdr;
+    cdipc_sub_t *sub = ch->sub;
+
+    sub->need_wait = need_wait;
+    sub->max_len = pend_max;
+    return 0;
+}
+
+
 enum OPT_DUMP_IDX {
     OPT_DUMP_NAME = 1000
 };
@@ -472,12 +553,26 @@ int cmd_dump(int argc, char **argv)
         cdipc_pub_t *pub = ch->pubs + i;
         printf("pub %d: cur: %d, ans: %d\n", pub->id,
                 pub->cur ? pub->cur->id : -1, pub->ans ? pub->ans->id : -1);
+        if (pub->cur) {
+            printf("  cur id: %d, len: %ld\n", pub->cur->id, pub->cur->len);
+        }
+        if (pub->ans) {
+            printf("  ans id: %d, len: %ld\n", pub->ans->id, pub->ans->len);
+        }
     }
 
     for (i = 0; i < hdr->max_sub; i++) {
         cdipc_sub_t *sub = ch->subs + i;
-        printf("sub %d: cur: %d, pend: %d\n", sub->id,
-                sub->cur ? sub->cur->id : -1, sub->pend.len);
+        printf("sub %d: cur: %d, pend: %d, need_wait: %d, max_len: %d\n",
+                sub->id, sub->cur ? sub->cur->id : -1, sub->pend.len,
+                        sub->need_wait, sub->max_len);
+        rlist_node_t *rnode, *node;
+        for (rnode = sub->pend.rfirst; rnode != NULL; rnode = node->rnext) {
+            node = (void *)rnode + (ptrdiff_t)hdr;
+            cdipc_nd_t *nd = rlist_entry(node, cdipc_nd_t);
+            printf("  node %d, ref: %d, owner: %d, len: %ld\n",
+                    nd->id, nd->ref, nd->owner, nd->len);
+        }
     }
 
     pthread_mutex_unlock(&hdr->mutex);
@@ -503,12 +598,15 @@ int main(int argc, char **argv)
         if (0 == strcmp(argv[1], "ret")) {
             return cmd_ret(argc - 1, &argv[1]);
         }
+        if (0 == strcmp(argv[1], "pend-cfg")) {
+            return cmd_pend_cfg(argc - 1, &argv[1]);
+        }
         if (0 == strcmp(argv[1], "dump")) {
             return cmd_dump(argc - 1, &argv[1]);
         }
     }
 
-    printf("Usage: cdipc [create|unlink|put|get|ret|dump] ...\n");
+    printf("Usage: cdipc [create|unlink|put|get|ret|pend-cfg|dump] ...\n");
     return -1;
 }
 

@@ -65,7 +65,7 @@ int cdipc_create(const char *name, cdipc_type_t type,
     ch->hdr->max_nd = max_nd;
     ch->hdr->max_len = max_len;
 
-    pthread_mutexattr_t mutexattr;
+    pthread_mutexattr_t mutexattr = {0};
     if ((r = pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED))) {
         dnf_error(ch->name, "pthread_mutexattr_setpshared\n");
         return -1;
@@ -89,7 +89,7 @@ int cdipc_create(const char *name, cdipc_type_t type,
     }
 #endif
     if ((r = pthread_mutex_init(&ch->hdr->mutex, &mutexattr))) {
-        dnf_error(ch->name, "pthread_mutex_init\n");
+        dnf_error(ch->name, "pthread_mutex_init, ret: %d\n", r);
         return -1;
     }
     if ((r = pthread_mutexattr_destroy(&mutexattr))) {
@@ -97,7 +97,7 @@ int cdipc_create(const char *name, cdipc_type_t type,
         return -1;
     }
 
-    pthread_condattr_t condattr;
+    pthread_condattr_t condattr = {0};
     if ((r = pthread_condattr_setpshared(&condattr, PTHREAD_PROCESS_SHARED))) {
         dnf_error(ch->name, "pthread_condattr_setpshared\n");
         return -1;
@@ -245,7 +245,10 @@ int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
         return 0;
     }
 
-    pthread_mutex_lock(&hdr->mutex);
+    if (pthread_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
     while (!(pub->cur = rlist_get_entry(hdr, &hdr->free, cdipc_nd_t))) {
         r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
@@ -273,7 +276,10 @@ int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
         return -1;
     }
 
-    pthread_mutex_lock(&hdr->mutex);
+    if (pthread_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
 
     while (true) {
         bool need_wait = false;
@@ -329,7 +335,10 @@ int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
 
-    pthread_mutex_lock(&hdr->mutex);
+    if (pthread_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
 
     while (!pub->ans) {
         r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
@@ -355,7 +364,10 @@ int cdipc_pub_free(cdipc_ch_t *ch)
         dnf_error(ch->name, "pub->ans empty\n");
         return -1;
     }
-    pthread_mutex_lock(&hdr->mutex);
+    if (pthread_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
     pub->ans->owner = -1;
     rlist_put(hdr, &hdr->free, &pub->ans->node);
     pub->ans = NULL;
@@ -372,7 +384,10 @@ int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     cdipc_sub_t *sub = ch->sub;
     assert(ch->role == CDIPC_SUB);
 
-    pthread_mutex_lock(&hdr->mutex);
+    if (pthread_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
 
 pick_node:
     while (!(sub->cur = rlist_get_entry(hdr, &sub->pend, cdipc_nd_t))) {
@@ -410,7 +425,10 @@ int cdipc_sub_ret(cdipc_ch_t *ch)
         return -1;
     }
 
-    pthread_mutex_lock(&hdr->mutex);
+    if (pthread_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
 
     if (sub->cur->owner < 0) {
         df_debug("avoid cancelled node\n");
@@ -443,7 +461,10 @@ int cdipc_sub_free(cdipc_ch_t *ch)
         dnf_error(ch->name, "sub->cur empty\n");
         return -1;
     }
-    pthread_mutex_lock(&hdr->mutex);
+    if (pthread_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
     if (--sub->cur->ref <= 0) {
         rlist_put(hdr, &hdr->free, &sub->cur->node);
     }

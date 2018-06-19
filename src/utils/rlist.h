@@ -36,6 +36,5 @@ void rlist_put(const void *base, rlist_head_t *head, rlist_node_t *node);
 #define rlist_get_entry(base, head, type)                       \
         rlist_entry_safe(rlist_get(base, head), type)
 
-
 #endif
 
