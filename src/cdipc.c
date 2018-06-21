@@ -266,7 +266,11 @@ int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
         return -1;
     }
     while (!(pub->r_cur = cd_nd2r(hdr, rlist_get_entry(hdr, &hdr->free, cdipc_nd_t)))) {
-        r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        if (abstime) {
+            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        } else {
+            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+        }
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
@@ -309,7 +313,11 @@ int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
         if (!need_wait)
             break;
 
-        r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        if (abstime) {
+            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        } else {
+            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+        }
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
@@ -366,7 +374,11 @@ int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     }
 
     while (!pub->r_ans) {
-        r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        if (abstime) {
+            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        } else {
+            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+        }
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
@@ -423,7 +435,11 @@ int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
 
 pick_node:
     while (!(wp = rlist_get_entry(hdr, &sub->pend, cdipc_wp_t))) {
-        r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        if (abstime) {
+            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+        } else {
+            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+        }
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
