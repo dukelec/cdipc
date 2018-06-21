@@ -49,14 +49,14 @@ int cdipc_create(const char *name, cdipc_type_t type,
 
     if (ftruncate(ch->fd, ch->map_len) == -1) {
         dnf_error(ch->name, "ftruncate to size %ld\n", ch->map_len);
-        return -1;
+        goto exit_free_fd;
     }
 
     ch->hdr = (cdipc_hdr_t*) mmap(NULL, ch->map_len,
             PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
     if (ch->hdr == MAP_FAILED) {
         dnf_error(ch->name, "mmap\n");
-        return -1;
+        goto exit_free_fd;
     }
 
     memset(ch->hdr, 0, sizeof(cdipc_hdr_t));
@@ -69,59 +69,59 @@ int cdipc_create(const char *name, cdipc_type_t type,
     pthread_mutexattr_t mutexattr;
     if ((r = pthread_mutexattr_init(&mutexattr))) {
         dnf_error(ch->name, "pthread_mutexattr_init\n");
-        return -1;
+        goto exit_free_mmap;
     }
     if ((r = pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED))) {
         dnf_error(ch->name, "pthread_mutexattr_setpshared\n");
-        return -1;
+        goto exit_free_mmap;
     }
 #ifdef HAVE_MUTEX_PRIORITY_INHERIT
     if ((r = pthread_mutexattr_setprotocol(&mutexattr, PTHREAD_PRIO_INHERIT))) {
         dnf_error(ch->name, "pthread_mutexattr_setprotocol");
-        return -1;
+        goto exit_free_mmap;
     }
 #endif
 #ifdef HAVE_MUTEX_ROBUST
     if ((r = pthread_mutexattr_setrobust(&mutexattr, PTHREAD_MUTEX_ROBUST))) {
         dnf_error(ch->name, "pthread_mutexattr_setrobust");
-        return -1;
+        goto exit_free_mmap;
     }
 #endif
 #if defined (HAVE_MUTEX_ERROR_CHECK) && defined (DEBUG)
     if ((r = pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_ERRORCHECK))) {
         dnf_error(ch->name, "pthread_mutexattr_settype");
-        return -1;
+        goto exit_free_mmap;
     }
 #endif
     if ((r = pthread_mutex_init(&ch->hdr->mutex, &mutexattr))) {
         dnf_error(ch->name, "pthread_mutex_init, ret: %d\n", r);
-        return -1;
+        goto exit_free_mmap;
     }
     if ((r = pthread_mutexattr_destroy(&mutexattr))) {
         dnf_error(ch->name, "pthread_mutexattr_destroy\n");
-        return -1;
+        goto exit_free_mmap;
     }
 
     pthread_condattr_t condattr;
     if ((r = pthread_condattr_init(&condattr))) {
         dnf_error(ch->name, "pthread_condattr_init\n");
-        return -1;
+        goto exit_free_mmap;
     }
     if ((r = pthread_condattr_setpshared(&condattr, PTHREAD_PROCESS_SHARED))) {
         dnf_error(ch->name, "pthread_condattr_setpshared\n");
-        return -1;
+        goto exit_free_mmap;
     }
     if ((r = pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC))) {
         dnf_error(ch->name, "pthread_condattr_setclock\n");
-        return -1;
+        goto exit_free_mmap;
     }
     if ((r = pthread_cond_init(&ch->hdr->cond, &condattr))) {
         dnf_error(ch->name, "pthread_cond_init\n");
-        return -1;
+        goto exit_free_mmap;
     }
     if ((r = pthread_condattr_destroy(&condattr))) {
         dnf_error(ch->name, "pthread_condattr_destroy\n");
-        return -1;
+        goto exit_free_mmap;
     }
 
     ch->pubs = (void *)ch->hdr + sizeof(cdipc_hdr_t);
@@ -153,6 +153,13 @@ int cdipc_create(const char *name, cdipc_type_t type,
 
     ch->hdr->magic = CDIPC_MAGIC_NUM;
     return cdipc_close(ch);
+
+exit_free_mmap:
+    munmap(ch->hdr, ch->map_len);
+exit_free_fd:
+    close(ch->fd);
+    cdipc_unlink(name);
+    return -1;
 }
 
 int cdipc_unlink(const char *name)
@@ -188,6 +195,7 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
     if (ch->hdr->magic != CDIPC_MAGIC_NUM) {
         dnf_error(ch->name, "wrong magic num: %08x, expect: %08x\n",
                 ch->hdr->magic, CDIPC_MAGIC_NUM);
+        munmap(ch->hdr, sizeof(cdipc_hdr_t));
         return -1;
     }
 
