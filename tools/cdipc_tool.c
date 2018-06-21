@@ -547,7 +547,7 @@ int cmd_dump(int argc, char **argv)
     printf("type: %s\n", hdr->type == CDIPC_SERVICE ? "service" : "topic");
     printf("max: pub %d, sub %d, nd %d, len %ld\n",
             hdr->max_pub, hdr->max_sub, hdr->max_nd, hdr->max_len);
-    printf("free: %d\n", hdr->free.len);
+    printf("free: %d, free_wp: %d\n", hdr->free.len, hdr->free_wp.len);
 
     for (i = 0; i < hdr->max_pub; i++) {
         cdipc_pub_t *pub = ch->pubs + i;
@@ -569,10 +569,15 @@ int cmd_dump(int argc, char **argv)
         printf("sub %d: cur: %d, pend: %d, need_wait: %d, max_len: %d\n",
                 sub->id, cur ? cur->id : -1, sub->pend.len,
                         sub->need_wait, sub->max_len);
+        if (cur) {
+            printf("  cur id: %d, ref: %d, owner: %d, len: %ld\n",
+                    cur->id, cur->ref, cur->owner, cur->len);
+        }
         rlist_node_t *rnode, *node;
         for (rnode = sub->pend.rfirst; rnode != NULL; rnode = node->rnext) {
             node = (void *)rnode + (ptrdiff_t)hdr;
-            cdipc_nd_t *nd = rlist_entry(node, cdipc_nd_t);
+            cdipc_wp_t *wp = rlist_entry(node, cdipc_wp_t);
+            cdipc_nd_t *nd = cd_r2nd(hdr, wp->r_nd);
             printf("  node %d, ref: %d, owner: %d, len: %ld\n",
                     nd->id, nd->ref, nd->owner, nd->len);
         }

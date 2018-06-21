@@ -34,6 +34,11 @@ typedef struct {
 } cdipc_nd_t;
 
 typedef struct {
+    rlist_node_t    node;
+    cdipc_nd_t      *r_nd;
+} cdipc_wp_t;               // wrapper
+
+typedef struct {
     int             id;
     cdipc_nd_t      *r_cur;
     cdipc_nd_t      *r_ans;
@@ -59,6 +64,7 @@ typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t  cond;
 
+    rlist_head_t    free_wp;
     rlist_head_t    free;
 } cdipc_hdr_t;
 
@@ -91,6 +97,18 @@ static cdipc_nd_t *cd_r2nd(const void *base, cdipc_nd_t *nd)
     if (nd == NULL)
         return NULL;
     return (void *)nd + (ptrdiff_t)base;
+}
+static cdipc_wp_t *cd_wp2r(const void *base, cdipc_wp_t *wp)
+{
+    if (wp == NULL)
+        return NULL;
+    return (void *)wp - (ptrdiff_t)base;
+}
+static cdipc_wp_t *cd_r2wp(const void *base, cdipc_wp_t *wp)
+{
+    if (wp == NULL)
+        return NULL;
+    return (void *)wp + (ptrdiff_t)base;
 }
 
 int cdipc_create(const char *name, cdipc_type_t type,

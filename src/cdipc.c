@@ -37,6 +37,7 @@ int cdipc_create(const char *name, cdipc_type_t type,
     ch->map_len = sizeof(cdipc_hdr_t) +
             sizeof(cdipc_pub_t) * max_pub +
             sizeof(cdipc_sub_t) * max_sub +
+            sizeof(cdipc_wp_t) * max_nd * max_sub +
             (sizeof(cdipc_nd_t) + max_len) * max_nd;
     strncpy(ch->name, name, NAME_MAX);
 
@@ -65,7 +66,11 @@ int cdipc_create(const char *name, cdipc_type_t type,
     ch->hdr->max_nd = max_nd;
     ch->hdr->max_len = max_len;
 
-    pthread_mutexattr_t mutexattr = {0};
+    pthread_mutexattr_t mutexattr;
+    if ((r = pthread_mutexattr_init(&mutexattr))) {
+        dnf_error(ch->name, "pthread_mutexattr_init\n");
+        return -1;
+    }
     if ((r = pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED))) {
         dnf_error(ch->name, "pthread_mutexattr_setpshared\n");
         return -1;
@@ -97,7 +102,11 @@ int cdipc_create(const char *name, cdipc_type_t type,
         return -1;
     }
 
-    pthread_condattr_t condattr = {0};
+    pthread_condattr_t condattr;
+    if ((r = pthread_condattr_init(&condattr))) {
+        dnf_error(ch->name, "pthread_condattr_init\n");
+        return -1;
+    }
     if ((r = pthread_condattr_setpshared(&condattr, PTHREAD_PROCESS_SHARED))) {
         dnf_error(ch->name, "pthread_condattr_setpshared\n");
         return -1;
@@ -117,7 +126,8 @@ int cdipc_create(const char *name, cdipc_type_t type,
 
     ch->pubs = (void *)ch->hdr + sizeof(cdipc_hdr_t);
     ch->subs = (void *)ch->pubs + sizeof(cdipc_pub_t) * max_pub;
-    cdipc_nd_t *nds = (void *)ch->subs + sizeof(cdipc_sub_t) * max_sub;
+    cdipc_wp_t *wps = (void *)ch->subs + sizeof(cdipc_sub_t) * max_sub;
+    cdipc_nd_t *nds = (void *)wps + sizeof(cdipc_wp_t) * max_nd * max_sub;
 
     for (i = 0; i < max_pub; i++) {
         cdipc_pub_t *pub = ch->pubs + i;
@@ -128,6 +138,11 @@ int cdipc_create(const char *name, cdipc_type_t type,
         cdipc_sub_t *sub = ch->subs + i;
         memset(sub, 0, sizeof(cdipc_sub_t));
         sub->id = i;
+    }
+    for (i = 0; i < max_nd * max_sub; i++) {
+        cdipc_wp_t *wp = wps + i;
+        memset(wp, 0, sizeof(cdipc_wp_t));
+        rlist_put(ch->hdr, &ch->hdr->free_wp, &wp->node);
     }
     for (i = 0; i < max_nd; i++) {
         cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + max_len) * i;
@@ -179,6 +194,7 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
     ch->map_len = sizeof(cdipc_hdr_t) +
             sizeof(cdipc_pub_t) * ch->hdr->max_pub +
             sizeof(cdipc_sub_t) * ch->hdr->max_sub +
+            sizeof(cdipc_wp_t) * ch->hdr->max_nd * ch->hdr->max_sub +
             (sizeof(cdipc_nd_t) + ch->hdr->max_len) * ch->hdr->max_nd;
 
     if (-1 == munmap(ch->hdr, sizeof(cdipc_hdr_t))) {
@@ -309,12 +325,19 @@ int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
             cdipc_sub_t *sub = ch->subs + i;
             if (sub->max_len != 0) {
                 if (sub->pend.len == sub->max_len) {
-                    cdipc_nd_t *nd = rlist_get_entry(hdr, &sub->pend, cdipc_nd_t);
-                    nd->owner = -1;
-                    rlist_put(hdr, &hdr->free, &nd->node);
+                    cdipc_wp_t *wp = rlist_get_entry(hdr, &sub->pend, cdipc_wp_t);
+                    assert(wp != NULL);
+                    cdipc_nd_t *nd = cd_r2nd(hdr, wp->r_nd);
+                    if (--nd->ref <= 0) {
+                        nd->owner = -1;
+                        rlist_put(hdr, &hdr->free, &nd->node);
+                    }
+                    rlist_put(hdr, &hdr->free_wp, &wp->node);
                 }
-                rlist_put(hdr, &sub->pend, &cur->node);
+                cdipc_wp_t *wp = rlist_get_entry(hdr, &hdr->free_wp, cdipc_wp_t);
                 cur->ref++;
+                wp->r_nd = cd_nd2r(hdr, cur);
+                rlist_put(hdr, &sub->pend, &wp->node);
             }
         }
         if (!cur->ref) {
@@ -385,7 +408,13 @@ int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
+    cdipc_wp_t *wp;
     assert(ch->role == CDIPC_SUB);
+
+    if (sub->r_cur) {
+        dnf_error(ch->name, "r_cur not empty\n");
+        return -1;
+    }
 
     if (pthread_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
@@ -393,7 +422,7 @@ int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     }
 
 pick_node:
-    while (!(sub->r_cur = cd_nd2r(hdr, rlist_get_entry(hdr, &sub->pend, cdipc_nd_t)))) {
+    while (!(wp = rlist_get_entry(hdr, &sub->pend, cdipc_wp_t))) {
         r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
@@ -402,15 +431,19 @@ pick_node:
             break;
         }
     }
+    if (wp) {
+        sub->r_cur = wp->r_nd;
+        rlist_put(hdr, &hdr->free_wp, &wp->node);
 
-    if (r == 0 && cd_r2nd(hdr, sub->r_cur)->owner < 0) {
-        if (--cd_r2nd(hdr, sub->r_cur)->ref <= 0) {
-            rlist_put(hdr, &hdr->free, &cd_r2nd(hdr, sub->r_cur)->node);
+        if (cd_r2nd(hdr, sub->r_cur)->owner < 0) {
+            if (--cd_r2nd(hdr, sub->r_cur)->ref <= 0) {
+                rlist_put(hdr, &hdr->free, &cd_r2nd(hdr, sub->r_cur)->node);
+            }
+            sub->r_cur = NULL;
+            df_debug("avoid cancelled node\n");
+            pthread_cond_broadcast(&hdr->cond);
+            goto pick_node;
         }
-        sub->r_cur = NULL;
-        df_debug("avoid cancelled node\n");
-        pthread_cond_broadcast(&hdr->cond);
-        goto pick_node;
     }
 
     pthread_cond_broadcast(&hdr->cond);
@@ -472,6 +505,7 @@ int cdipc_sub_free(cdipc_ch_t *ch)
         return -1;
     }
     if (--cd_r2nd(hdr, sub->r_cur)->ref <= 0) {
+        cd_r2nd(hdr, sub->r_cur)->owner = -1;
         rlist_put(hdr, &hdr->free, &cd_r2nd(hdr, sub->r_cur)->node);
     }
     sub->r_cur = NULL;
