@@ -10,12 +10,10 @@
 BUILD_DIR = build
 
 INCLUDES = \
-../../src/utils \
-./
+../.. \
+.
 
 C_SOURCES = \
-../../src/cdipc.c \
-../../src/utils/rlist.c \
 $(BUILD_DIR)/swig_cdipc_wrap.c
 
 
@@ -30,14 +28,14 @@ vpath %.c $(sort $(dir $(C_SOURCES)))
 
 I_INCLUDES = $(foreach includedir,$(INCLUDES),-I$(includedir))
 CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC $(shell pkg-config --cflags python-3.6m)
-LDFLAGS = -lpthread -lrt -shared
+LDFLAGS = -lcdipc -lpthread -lrt -shared
 
 DEPS = $(foreach includedir,$(INCLUDES),$(wildcard $(includedir)/*.h))
 
 main: $(TARGET)
 	@
 
-$(BUILD_DIR)/swig_cdipc_wrap.c: ../swig_cdipc.i
+$(BUILD_DIR)/swig_cdipc_wrap.c: ../swig_cdipc.i | $(BUILD_DIR)
 	swig -o $(BUILD_DIR)/swig_cdipc_wrap.c -outdir ./ -python ../swig_cdipc.i
 
 $(BUILD_DIR)/%.o: %.c $(DEPS) Makefile | $(BUILD_DIR)
@@ -52,5 +50,5 @@ $(BUILD_DIR):
 .PHONY: clean
 
 clean:
-	rm -rf $(BUILD_DIR) $(TARGET)
+	rm -rf cdipc.py $(BUILD_DIR) $(TARGET)
 

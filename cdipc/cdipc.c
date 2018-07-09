@@ -28,10 +28,6 @@ int cdipc_create(const char *name, cdipc_type_t type,
         dnf_error(name, "zero arguments detected\n");
         return -1;
     }
-    if (type == CDIPC_SERVICE && max_sub != 1) {
-        dnf_error(name, "max_sub must be 1 for service\n");
-        return -1;
-    }
 
     memset(ch, 0, sizeof(cdipc_ch_t));
     ch->map_len = sizeof(cdipc_hdr_t) +
@@ -148,6 +144,8 @@ int cdipc_create(const char *name, cdipc_type_t type,
         cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + max_len) * i;
         memset(nd, 0, sizeof(cdipc_nd_t));
         nd->id = i;
+        nd->pub_id = -1;
+        nd->pub_id_bk = -1;
         rlist_put(ch->hdr, &ch->hdr->free, &nd->node);
     }
 
@@ -249,31 +247,19 @@ int cdipc_close(cdipc_ch_t *ch)
 
 // for pub:
 
-int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
+cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
 {
     int r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_pub_t *pub = ch->pub;
+    cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_PUB);
-
-    if (pub->r_cur) {
-        df_warn("aready allocated\n");
-        cd_r2nd(hdr, pub->r_cur)->owner = pub->id;
-        return 0;
-    }
-    if (hdr->type == CDIPC_SERVICE && pub->r_ans) {
-        df_warn("unexpected ans\n");
-        pub->r_cur = pub->r_ans;
-        pub->r_ans = NULL;
-        cd_r2nd(hdr, pub->r_cur)->owner = pub->id;
-        return 0;
-    }
 
     if (pthread_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
-        return -1;
+        return NULL;
     }
-    while (!(pub->r_cur = cd_nd2r(hdr, rlist_get_entry(hdr, &hdr->free, cdipc_nd_t)))) {
+    while (!(nd = rlist_get_entry(hdr, &hdr->free, cdipc_nd_t))) {
         if (abstime) {
             r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         } else {
@@ -286,23 +272,23 @@ int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
             break;
         }
     }
-    if (pub->r_cur)
-        cd_r2nd(hdr, pub->r_cur)->owner = pub->id;
+    if (nd) {
+        nd->abort = false;
+        nd->pub_id = pub->id;
+        nd->pub_id_bk = pub->id;
+        nd->sub_ref = 0;
+    }
     pthread_mutex_unlock(&hdr->mutex);
-    return r;
+    return nd;
 }
 
-int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
+int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
+        const struct timespec *abstime)
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
-
-    if (!pub->r_cur) {
-        dnf_error(ch->name, "cur empty\n");
-        return -1;
-    }
 
     if (pthread_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
@@ -313,7 +299,7 @@ int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
         bool need_wait = false;
         for (i = 0; i < hdr->max_sub; i++) {
             cdipc_sub_t *sub = ch->subs + i;
-            if (sub->need_wait && sub->pend.len == sub->max_len) {
+            if (sub->need_wait && sub->pend_head.len == sub->max_len) {
                 need_wait = true;
                 break;
             }
@@ -335,41 +321,41 @@ int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime)
     }
 
     if (r == 0) {
-        cdipc_nd_t *cur = cd_r2nd(hdr, pub->r_cur);
-        cur->ref = 0;
+        bool drop = true;
+        if (hdr->type == CDIPC_TOPIC)
+            nd->pub_id = -1;
         for (i = 0; i < hdr->max_sub; i++) {
             cdipc_sub_t *sub = ch->subs + i;
             if (sub->max_len != 0) {
-                if (sub->pend.len == sub->max_len) {
-                    cdipc_wp_t *wp = rlist_get_entry(hdr, &sub->pend, cdipc_wp_t);
+                drop = false;
+                if (sub->pend_head.len == sub->max_len) {
+                    cdipc_wp_t *wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t);
                     assert(wp != NULL);
                     cdipc_nd_t *nd = cd_r2nd(hdr, wp->r_nd);
-                    if (--nd->ref <= 0) {
-                        nd->owner = -1;
-                        rlist_put(hdr, &hdr->free, &nd->node);
-                    }
                     rlist_put(hdr, &hdr->free_wp, &wp->node);
+                    nd->sub_ref &= ~(1 << i);
+                    if (!nd->sub_ref && nd->pub_id < 0)
+                        rlist_put(hdr, &hdr->free, &nd->node);
                 }
                 cdipc_wp_t *wp = rlist_get_entry(hdr, &hdr->free_wp, cdipc_wp_t);
-                cur->ref++;
-                wp->r_nd = cd_nd2r(hdr, cur);
-                rlist_put(hdr, &sub->pend, &wp->node);
+                nd->sub_ref |= 1 << i;
+                wp->r_nd = cd_nd2r(hdr, nd);
+                rlist_put(hdr, &sub->pend_head, &wp->node);
             }
         }
-        if (!cur->ref) {
+        if (drop) {
             dnf_debug(ch->name, "drop\n");
-            rlist_put(hdr, &hdr->free, &cur->node);
+            rlist_put(hdr, &hdr->free, &nd->node);
         }
-        pub->r_cur = NULL;
         pthread_cond_broadcast(&hdr->cond);
     }
 
     pthread_mutex_unlock(&hdr->mutex);
-
     return r;
 }
 
-int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime)
+int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
+        const struct timespec *abstime)
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
@@ -381,7 +367,7 @@ int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime)
         return -1;
     }
 
-    while (!pub->r_ans) {
+    while (nd->sub_ref & 1) {
         if (abstime) {
             r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         } else {
@@ -399,23 +385,19 @@ int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     return r;
 }
 
-int cdipc_pub_free(cdipc_ch_t *ch)
+int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
 {
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB && hdr->type == CDIPC_SERVICE);
 
-    if (!pub->r_ans) {
-        dnf_error(ch->name, "pub->ans empty\n");
-        return -1;
-    }
     if (pthread_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
-    cd_r2nd(hdr, pub->r_ans)->owner = -1;
-    rlist_put(hdr, &hdr->free, &cd_r2nd(hdr, pub->r_ans)->node);
-    pub->r_ans = NULL;
+    nd->pub_id = -1;
+    if (!nd->sub_ref && nd->pub_id < 0)
+        rlist_put(hdr, &hdr->free, &nd->node);
     pthread_cond_broadcast(&hdr->cond);
     pthread_mutex_unlock(&hdr->mutex);
     return 0;
@@ -423,26 +405,22 @@ int cdipc_pub_free(cdipc_ch_t *ch)
 
 // for sub:
 
-int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
+cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
     cdipc_wp_t *wp;
+    cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_SUB);
-
-    if (sub->r_cur) {
-        dnf_error(ch->name, "r_cur not empty\n");
-        return -1;
-    }
 
     if (pthread_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
-        return -1;
+        return NULL;
     }
 
 pick_node:
-    while (!(wp = rlist_get_entry(hdr, &sub->pend, cdipc_wp_t))) {
+    while (!(wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t))) {
         if (abstime) {
             r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         } else {
@@ -456,15 +434,15 @@ pick_node:
         }
     }
     if (wp) {
-        sub->r_cur = wp->r_nd;
+        nd = cd_r2nd(hdr, wp->r_nd);
         rlist_put(hdr, &hdr->free_wp, &wp->node);
 
-        if (cd_r2nd(hdr, sub->r_cur)->owner < 0) {
-            if (--cd_r2nd(hdr, sub->r_cur)->ref <= 0) {
-                rlist_put(hdr, &hdr->free, &cd_r2nd(hdr, sub->r_cur)->node);
-            }
-            sub->r_cur = NULL;
-            df_debug("avoid cancelled node\n");
+        if (nd->abort) {
+            nd->sub_ref &= ~(1 << sub->id);
+            if (!nd->sub_ref && nd->pub_id < 0)
+                rlist_put(hdr, &hdr->free, &nd->node);
+            nd = NULL;
+            df_debug("avoid abort node\n");
             pthread_cond_broadcast(&hdr->cond);
             goto pick_node;
         }
@@ -472,18 +450,18 @@ pick_node:
 
     pthread_cond_broadcast(&hdr->cond);
     pthread_mutex_unlock(&hdr->mutex);
-    return r;
+    return nd;
 }
 
-int cdipc_sub_ret(cdipc_ch_t *ch)
+int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
     assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_SERVICE);
 
-    if (!sub->r_cur) {
-        dnf_error(ch->name, "cur empty\n");
+    if (sub->id != 0) {
+        dnf_error(ch->name, "only allow sub id 0\n");
         return -1;
     }
 
@@ -492,47 +470,36 @@ int cdipc_sub_ret(cdipc_ch_t *ch)
         return -1;
     }
 
-    if (cd_r2nd(hdr, sub->r_cur)->owner < 0) {
+    nd->sub_ref &= ~(1 << sub->id);
+
+    if (nd->abort) {
         df_debug("avoid cancelled node\n");
-        if (--cd_r2nd(hdr, sub->r_cur)->ref != 0)
-            df_warn("ref not zero: %d\n", cd_r2nd(hdr, sub->r_cur)->ref);
-        rlist_put(hdr, &hdr->free, &cd_r2nd(hdr, sub->r_cur)->node);
-        sub->r_cur = NULL;
-    } else {
-        cdipc_pub_t *pub = ch->pubs + cd_r2nd(hdr, sub->r_cur)->owner;
-        if (pub->r_ans) {
-            dnf_error(ch->name, "pub->ans not empty\n");
-            r = -1;
-        } else {
-            pub->r_ans = sub->r_cur;
-            sub->r_cur = NULL;
-        }
+        if (!nd->sub_ref && nd->pub_id < 0)
+            rlist_put(hdr, &hdr->free, &nd->node);
     }
+
+    // TODO: set nd status
 
     pthread_cond_broadcast(&hdr->cond);
     pthread_mutex_unlock(&hdr->mutex);
     return r;
 }
 
-int cdipc_sub_free(cdipc_ch_t *ch)
+int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
 {
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
     assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_TOPIC);
 
-    if (!sub->r_cur) {
-        dnf_error(ch->name, "sub->cur empty\n");
-        return -1;
-    }
     if (pthread_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
-    if (--cd_r2nd(hdr, sub->r_cur)->ref <= 0) {
-        cd_r2nd(hdr, sub->r_cur)->owner = -1;
-        rlist_put(hdr, &hdr->free, &cd_r2nd(hdr, sub->r_cur)->node);
-    }
-    sub->r_cur = NULL;
+
+    nd->sub_ref &= ~(1 << sub->id);
+    if (!nd->sub_ref && nd->pub_id < 0)
+        rlist_put(hdr, &hdr->free, &nd->node);
+
     pthread_cond_broadcast(&hdr->cond);
     pthread_mutex_unlock(&hdr->mutex);
     return 0;

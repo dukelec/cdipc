@@ -27,29 +27,30 @@ typedef enum {
 typedef struct {
     rlist_node_t    node;
     int             id;
-    int             ref;    // reference count
-    int             owner;  // pub's id
+    uint64_t        sub_ref;    // reference map
+                                // TODO: add support for more than 64 bits
+    int             pub_id;
+    int             pub_id_bk;  // for logging
+    bool            abort;
     size_t          len;
+    size_t          ret_len;    // service only, ret data after origin data
     uint8_t         dat[];
 } cdipc_nd_t;
 
 typedef struct {
     rlist_node_t    node;
     cdipc_nd_t      *r_nd;
-} cdipc_wp_t;               // wrapper
+} cdipc_wp_t;                   // wrapper
 
 typedef struct {
     int             id;
-    cdipc_nd_t      *r_cur;
-    cdipc_nd_t      *r_ans;
-} cdipc_pub_t;
+} cdipc_pub_t;                  // TODO: add process pid, also for sub_t
 
 typedef struct {
     int             id;
     int             max_len;
     bool            need_wait;
-    cdipc_nd_t      *r_cur;
-    rlist_head_t    pend;
+    rlist_head_t    pend_head;
 } cdipc_sub_t;
 
 typedef struct {
@@ -117,12 +118,14 @@ int cdipc_unlink(const char *name);
 int cdipc_open(cdipc_ch_t *ch, const char *name, cdipc_role_t role, int id);
 int cdipc_close(cdipc_ch_t *ch);
 
-int cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime);
-int cdipc_pub_put(cdipc_ch_t *ch, const struct timespec *abstime);
-int cdipc_pub_get(cdipc_ch_t *ch, const struct timespec *abstime);
-int cdipc_pub_free(cdipc_ch_t *ch);
-int cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime);
-int cdipc_sub_ret(cdipc_ch_t *ch);
-int cdipc_sub_free(cdipc_ch_t *ch);
+cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime);
+int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
+        const struct timespec *abstime);
+int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
+        const struct timespec *abstime);
+int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd);
+cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime);
+int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd);
+int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd);
 
 #endif

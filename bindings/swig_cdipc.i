@@ -1,16 +1,16 @@
 %module cdipc
 %{
-    #include "../../src/utils/cd_time.h"
-    #include "../../src/utils/cd_utils.h"
-    #include "../../src/utils/rlist.h"
-    #include "../../src/cdipc.h"
+    #include <cdipc/utils/cd_time.h>
+    #include <cdipc/utils/cd_utils.h>
+    #include <cdipc/utils/rlist.h>
+    #include <cdipc/cdipc.h>
     #include "../swig_helper.h"
 %}
 
 
 %include "/usr/include/bits/types/struct_timespec.h"
-%include "../src/utils/cd_time.h"
-%include "../src/cdipc.h"
+%include "../../cdipc/utils/cd_time.h"
+%include "../../cdipc/cdipc.h"
 
 
 %typemap(in) (char *data, int size)

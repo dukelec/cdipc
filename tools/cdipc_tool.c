@@ -13,11 +13,11 @@
 #include <fcntl.h>
 #include <assert.h>
 
-#include "cd_utils.h"
-#include "cd_debug.h"
-#include "rlist.h"
-#include "cdipc.h"
-#include "cd_time.h"
+#include <cdipc/utils/cd_utils.h>
+#include <cdipc/utils/cd_debug.h>
+#include <cdipc/utils/rlist.h>
+#include <cdipc/utils/cd_time.h>
+#include <cdipc/cdipc.h>
 
 
 enum OPT_CREATE_IDX {
@@ -44,8 +44,8 @@ int cmd_create(int argc, char **argv)
     char name[NAME_MAX] = { 0 };
     cdipc_type_t type = CDIPC_TOPIC;
     int max_pub = 2;
-    int max_sub = 1;
-    int max_nd = 1;
+    int max_sub = 2;
+    int max_nd = 5;
     size_t max_len = 256;
 
     while (true) {
@@ -168,6 +168,7 @@ int cmd_put(int argc, char **argv)
     int r = 0;
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
+    cdipc_nd_t *nd;
     char name[NAME_MAX] = { 0 };
     int id = 0;
     int timeout_ms = 10000;
@@ -220,26 +221,26 @@ int cmd_put(int argc, char **argv)
     if ((r = cdipc_open(ch, name, CDIPC_PUB, id))) {
         return -1;
     }
-    if ((r = cdipc_pub_alloc(ch, &abstime))) {
+    if (!(nd = cdipc_pub_alloc(ch, &abstime))) {
         return -1;
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_pub_t *pub = ch->pub;
 
-    strcpy(cd_r2nd(hdr, pub->r_cur)->dat, dat);
-    cd_r2nd(hdr, pub->r_cur)->len = strlen(dat);
+    strcpy(nd->dat, dat);
+    nd->len = strlen(dat);
 
-    if ((r = cdipc_pub_put(ch, &abstime))) {
+    if ((r = cdipc_pub_put(ch, nd, &abstime))) {
         return -1;
     }
 
     if (hdr->type == CDIPC_SERVICE) {
-        if ((r = cdipc_pub_get(ch, &abstime))) {
+        if ((r = cdipc_pub_wait(ch, nd, &abstime))) {
             return -1;
         }
-        printf("ret: %s\n", cd_r2nd(hdr, pub->r_ans)->dat);
-        if ((r = cdipc_pub_free(ch))) {
+        printf("ret: %s\n", nd->dat + nd->len);
+        if ((r = cdipc_pub_free(ch, nd))) {
             return -1;
         }
     }
@@ -252,13 +253,14 @@ enum OPT_GET_IDX {
     OPT_GET_NAME = 1000,
     OPT_GET_ID,
     OPT_GET_TIMEOUT,
-    OPT_GET_DAT
+    OPT_GET_RET_DAT
 };
 
 static struct option opt_get[] = {
         { "name",       required_argument, NULL, OPT_GET_NAME },
         { "id",         required_argument, NULL, OPT_GET_ID },
         { "timeout",    required_argument, NULL, OPT_GET_TIMEOUT },
+        { "ret-dat",    required_argument, NULL, OPT_GET_RET_DAT },
         { 0, 0, 0, 0 }
 };
 
@@ -267,9 +269,11 @@ int cmd_get(int argc, char **argv)
     int r = 0;
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
+    cdipc_nd_t *nd;
     char name[NAME_MAX] = { 0 };
     int id = 0;
     int timeout_ms = 10000;
+    char *ret_dat = "ret msg";
 
     while (true) {
         int option = getopt_long(argc, argv, "", opt_get, NULL);
@@ -295,6 +299,10 @@ int cmd_get(int argc, char **argv)
             timeout_ms = atol(optarg);
             df_debug("set timeout_ms: %d\n", timeout_ms);
             break;
+        case OPT_GET_RET_DAT:
+            ret_dat = strdup(optarg);
+            df_debug("set ret_dat: %s\n", ret_dat);
+            break;
         case 0:
         case '?':
         default:
@@ -318,95 +326,22 @@ int cmd_get(int argc, char **argv)
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
 
-    if ((r = cdipc_sub_get(ch, &abstime))) {
+    if (!(nd = cdipc_sub_get(ch, &abstime))) {
         return -1;
     }
-    printf("get: %s\n", cd_r2nd(hdr, sub->r_cur)->dat);
+    printf("get: %s\n", nd->dat);
 
     if (hdr->type != CDIPC_SERVICE) {
-        if ((r = cdipc_sub_free(ch))) {
+        if ((r = cdipc_sub_free(ch, nd))) {
             return -1;
         }
-    }
+    } else {
+        strcpy(nd->dat + nd->len, ret_dat);
+        nd->ret_len = strlen(ret_dat);
 
-    return 0;
-}
-
-
-enum OPT_RET_IDX {
-    OPT_RET_NAME = 1000,
-    OPT_RET_ID,
-    OPT_RET_TIMEOUT,
-    OPT_RET_DAT
-};
-
-static struct option opt_ret[] = {
-        { "name",       required_argument, NULL, OPT_RET_NAME },
-        { "id",         required_argument, NULL, OPT_RET_ID },
-        { "dat",        required_argument, NULL, OPT_RET_DAT },
-        { 0, 0, 0, 0 }
-};
-
-int cmd_ret(int argc, char **argv)
-{
-    int r = 0;
-    cdipc_ch_t _ch = { 0 };
-    cdipc_ch_t *ch = &_ch;
-    char name[NAME_MAX] = { 0 };
-    int id = 0;
-    char *dat = "ret msg";
-
-    while (true) {
-        int option = getopt_long(argc, argv, "", opt_ret, NULL);
-        if (option == -1) {
-            if (optind < argc) {
-                printf ("non-option argv-elements: ");
-                while (optind < argc)
-                    printf ("%s ", argv[optind++]);
-                putchar ('\n');
-            }
-            break;
+        if ((r = cdipc_sub_ret(ch, nd))) {
+            return -1;
         }
-        switch (option) {
-        case OPT_RET_NAME:
-            strncpy(name, optarg, NAME_MAX);
-            df_debug("set name: %s\n", name);
-            break;
-        case OPT_RET_ID:
-            id = atol(optarg);
-            df_debug("set id: %d\n", id);
-            break;
-        case OPT_RET_DAT:
-            dat = strdup(optarg);
-            df_debug("set dat: %s\n", dat);
-            break;
-        case 0:
-        case '?':
-        default:
-            break;
-        }
-    }
-    if (!strlen(name)) {
-        df_error("--name must specified\n");
-        return -1;
-    }
-
-    if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
-        return -1;
-    }
-
-    cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_sub_t *sub = ch->sub;
-
-    if (hdr->type != CDIPC_SERVICE) {
-        dnf_error(name, "not service\n");
-        return -1;
-    }
-    strcpy(cd_r2nd(hdr, sub->r_cur)->dat, dat);
-    cd_r2nd(hdr, sub->r_cur)->len = strlen(dat);
-
-    if ((r = cdipc_sub_ret(ch))) {
-        return -1;
     }
 
     return 0;
@@ -522,7 +457,7 @@ int cmd_dump(int argc, char **argv)
             break;
         }
         switch (option) {
-        case OPT_RET_NAME:
+        case OPT_DUMP_NAME:
             strncpy(name, optarg, NAME_MAX);
             df_debug("set name: %s\n", name);
             break;
@@ -544,43 +479,46 @@ int cmd_dump(int argc, char **argv)
     cdipc_hdr_t *hdr = ch->hdr;
     pthread_mutex_lock(&hdr->mutex);
 
-    printf("type: %s\n", hdr->type == CDIPC_SERVICE ? "service" : "topic");
-    printf("max: pub %d, sub %d, nd %d, len %ld\n",
+    printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
+            hdr->type == CDIPC_SERVICE ? "service" : "topic",
             hdr->max_pub, hdr->max_sub, hdr->max_nd, hdr->max_len);
     printf("free: %d, free_wp: %d\n", hdr->free.len, hdr->free_wp.len);
 
-    for (i = 0; i < hdr->max_pub; i++) {
-        cdipc_pub_t *pub = ch->pubs + i;
-        cdipc_nd_t *cur = cd_r2nd(hdr, pub->r_cur);
-        cdipc_nd_t *ans = cd_r2nd(hdr, pub->r_ans);
-        printf("pub %d: cur: %d, ans: %d\n", pub->id,
-                cur ? cur->id : -1, ans ? ans->id : -1);
-        if (cur) {
-            printf("  cur id: %d, len: %ld\n", cur->id, cur->len);
+    {
+        rlist_node_t *rnode, *node;
+        printf("free nodes: [");
+        for (rnode = hdr->free.rfirst; rnode != NULL; rnode = node->rnext) {
+            node = (void *)rnode + (ptrdiff_t)hdr;
+            cdipc_nd_t *nd = rlist_entry(node, cdipc_nd_t);
+            printf("%s%d", rnode == hdr->free.rfirst ? "" : ", ", nd->id);
         }
-        if (ans) {
-            printf("  ans id: %d, len: %ld\n", ans->id, ans->len);
+        printf("]\n");
+    }
+    {
+        cdipc_wp_t *wps = (void *)ch->subs + sizeof(cdipc_sub_t) * hdr->max_sub;
+        cdipc_nd_t *nds = (void *)wps + sizeof(cdipc_wp_t) * hdr->max_nd * hdr->max_sub;
+
+        for (i = 0; i < hdr->max_nd; i++) {
+            cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + hdr->max_len) * i;
+            if (!nd->sub_ref && nd->pub_id < 0)
+                continue;
+            printf("- node %d, sub_ref: %016lx, pub_id: %d (%d), len: %ld, ret_len: %ld\n",
+                    nd->id, nd->sub_ref, nd->pub_id, nd->pub_id_bk, nd->len, nd->ret_len);
         }
     }
 
     for (i = 0; i < hdr->max_sub; i++) {
-        cdipc_sub_t *sub = ch->subs + i;
-        cdipc_nd_t *cur = cd_r2nd(hdr, sub->r_cur);
-        printf("sub %d: cur: %d, pend: %d, need_wait: %d, max_len: %d\n",
-                sub->id, cur ? cur->id : -1, sub->pend.len,
-                        sub->need_wait, sub->max_len);
-        if (cur) {
-            printf("  cur id: %d, ref: %d, owner: %d, len: %ld\n",
-                    cur->id, cur->ref, cur->owner, cur->len);
-        }
         rlist_node_t *rnode, *node;
-        for (rnode = sub->pend.rfirst; rnode != NULL; rnode = node->rnext) {
+        cdipc_sub_t *sub = ch->subs + i;
+        printf("sub %d: pend: %d, need_wait: %d, max_len: %d: [",
+                sub->id, sub->pend_head.len, sub->need_wait, sub->max_len);
+        for (rnode = sub->pend_head.rfirst; rnode != NULL; rnode = node->rnext) {
             node = (void *)rnode + (ptrdiff_t)hdr;
             cdipc_wp_t *wp = rlist_entry(node, cdipc_wp_t);
             cdipc_nd_t *nd = cd_r2nd(hdr, wp->r_nd);
-            printf("  node %d, ref: %d, owner: %d, len: %ld\n",
-                    nd->id, nd->ref, nd->owner, nd->len);
+            printf("%s%d", rnode == sub->pend_head.rfirst ? "" : ", ", nd->id);
         }
+        printf("]\n");
     }
 
     pthread_mutex_unlock(&hdr->mutex);
@@ -603,9 +541,6 @@ int main(int argc, char **argv)
         if (0 == strcmp(argv[1], "get")) {
             return cmd_get(argc - 1, &argv[1]);
         }
-        if (0 == strcmp(argv[1], "ret")) {
-            return cmd_ret(argc - 1, &argv[1]);
-        }
         if (0 == strcmp(argv[1], "pend-cfg")) {
             return cmd_pend_cfg(argc - 1, &argv[1]);
         }
@@ -614,7 +549,7 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("Usage: cdipc [create|unlink|put|get|ret|pend-cfg|dump] ...\n");
+    printf("Usage: cdipc [create|unlink|put|get|pend-cfg|dump] ...\n");
     return -1;
 }
 

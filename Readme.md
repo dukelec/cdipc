@@ -31,34 +31,35 @@ Currently we use a single conditional variable instead of all semaphores for sim
 #### Topic
 
 1. The publisher request a free node at begining, then fill data to the node at any time.
-2. The publisher append the same node to all subscriber's node_head, and increase the reference count of the node each time.
+2. The publisher append the same node to all subscriber's node_head, and set the node reference map corresponding bits.
    If any subscriber's nodes amount equal to it's max_len before append new node to anyone:
      wait until not equal if need_wait is true;
-     or decrease the reference count of the oldest node, then free or drop it.
+     or clear the reference map bit of the oldest node, then free or drop it.
 3. The subscriber pick up a node, then use it at any time (read only).
-4. After use, decrease the reference count and release the node if the count become zero (or drop if not zero).
+4. After use, clear the reference map bit and release the node if the map become zero (or drop if not zero).
 
 #### Service
 
 For use as service, only one replier is allowed.
 
-1. The requester request a free node.
-2. The requester append the node to replier's node_head, and don't check replier's nodes amount.
+1. The requester request a free node (as same as topic).
+2. The requester append the node to replier's node_head (as same as topic, without clear pub reference).
 3. The replier pick up a node.
-4. The replier return the answer to requester (overwrite or append after original data). If the timeout flag in the node is set by requester, free it instead.
-5. The requester free the node.
+4. The replier return data to requester (by simply clear reference map bit) (append after original data).
+5. The requester free the node after read return data.
 
 
 ### Other Consideration
 
- - We could implement the channel data structure inside a centra server application, for cross platform purpose.
+ - We could implement the channel data structure inside a centra server application (instead of shared memory), for cross platform purpose.
  - We could use different daemon application to export Topic and Service channel to different interface protocol, e.g. websocket, TCP/UDP socket, unix socket.
+ - We could traversal all nodes to retrieve lost nodes depend on pub and sub reference, e.g. process exist on error.
 
 #### Logging
 
-Use a stand alone topic for logging, when anyone call the library's API to put or get a node, the library use the node's index number as an id, write the id and topic path into log node, and copy part of data to log node, then send the log node to log topic.
+We can simply add one or more subscriber to each topic and service dedicated for logging.
 
-To save full data for big data size topic, you can simply add a subscriber for debug in that topic.
+Note: The log subscriber in service nerver replier to requester.
 
 
 ## License

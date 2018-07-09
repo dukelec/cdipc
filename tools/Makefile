@@ -8,14 +8,11 @@
 #
 
 INCLUDES = \
-../src \
-../src/utils \
-./
+.. \
+.
 
 C_SOURCES = \
-cdipc_tool.c \
-../src/cdipc.c \
-../src/utils/rlist.c
+cdipc_tool.c
 
 
 GIT_VERSION := $(shell git describe --dirty --always --tags)
@@ -30,7 +27,7 @@ vpath %.c $(sort $(dir $(C_SOURCES)))
 
 I_INCLUDES = $(foreach includedir,$(INCLUDES),-I$(includedir))
 CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\"
-LDFLAGS = -lpthread -lrt
+LDFLAGS = -lcdipc -lpthread -lrt
 
 DEPS = $(foreach includedir,$(INCLUDES),$(wildcard $(includedir)/*.h))
 
