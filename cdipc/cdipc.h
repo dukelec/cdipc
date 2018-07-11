@@ -91,25 +91,25 @@ static cdipc_nd_t *cd_nd2r(const void *base, cdipc_nd_t *nd)
 {
     if (nd == NULL)
         return NULL;
-    return (void *)nd - (ptrdiff_t)base;
+    return (cdipc_nd_t *)((void *)nd - (ptrdiff_t)base);
 }
 static cdipc_nd_t *cd_r2nd(const void *base, cdipc_nd_t *nd)
 {
     if (nd == NULL)
         return NULL;
-    return (void *)nd + (ptrdiff_t)base;
+    return (cdipc_nd_t *)((void *)nd + (ptrdiff_t)base);
 }
 static cdipc_wp_t *cd_wp2r(const void *base, cdipc_wp_t *wp)
 {
     if (wp == NULL)
         return NULL;
-    return (void *)wp - (ptrdiff_t)base;
+    return (cdipc_wp_t *)((void *)wp - (ptrdiff_t)base);
 }
 static cdipc_wp_t *cd_r2wp(const void *base, cdipc_wp_t *wp)
 {
     if (wp == NULL)
         return NULL;
-    return (void *)wp + (ptrdiff_t)base;
+    return (cdipc_wp_t *)((void *)wp + (ptrdiff_t)base);
 }
 
 int cdipc_create(const char *name, cdipc_type_t type,
