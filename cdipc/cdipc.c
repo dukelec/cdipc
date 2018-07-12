@@ -7,7 +7,6 @@
  * Author: Duke Fong <duke@dukelec.com>
  */
 
-#include <pthread.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <assert.h>
@@ -15,6 +14,7 @@
 #include "cd_utils.h"
 #include "cd_debug.h"
 #include "rlist.h"
+#include "cd_futex.h"
 #include "cdipc.h"
 
 int cdipc_create(const char *name, cdipc_type_t type,
@@ -62,61 +62,13 @@ int cdipc_create(const char *name, cdipc_type_t type,
     ch->hdr->max_nd = max_nd;
     ch->hdr->max_len = max_len;
 
-    pthread_mutexattr_t mutexattr;
-    if ((r = pthread_mutexattr_init(&mutexattr))) {
-        dnf_error(ch->name, "pthread_mutexattr_init\n");
-        goto exit_free_mmap;
-    }
-    if ((r = pthread_mutexattr_setpshared(&mutexattr, PTHREAD_PROCESS_SHARED))) {
-        dnf_error(ch->name, "pthread_mutexattr_setpshared\n");
-        goto exit_free_mmap;
-    }
-#ifdef HAVE_MUTEX_PRIORITY_INHERIT
-    if ((r = pthread_mutexattr_setprotocol(&mutexattr, PTHREAD_PRIO_INHERIT))) {
-        dnf_error(ch->name, "pthread_mutexattr_setprotocol");
-        goto exit_free_mmap;
-    }
-#endif
-#ifdef HAVE_MUTEX_ROBUST
-    if ((r = pthread_mutexattr_setrobust(&mutexattr, PTHREAD_MUTEX_ROBUST))) {
-        dnf_error(ch->name, "pthread_mutexattr_setrobust");
-        goto exit_free_mmap;
-    }
-#endif
-#if defined (HAVE_MUTEX_ERROR_CHECK) && defined (DEBUG)
-    if ((r = pthread_mutexattr_settype(&mutexattr, PTHREAD_MUTEX_ERRORCHECK))) {
-        dnf_error(ch->name, "pthread_mutexattr_settype");
-        goto exit_free_mmap;
-    }
-#endif
-    if ((r = pthread_mutex_init(&ch->hdr->mutex, &mutexattr))) {
-        dnf_error(ch->name, "pthread_mutex_init, ret: %d\n", r);
-        goto exit_free_mmap;
-    }
-    if ((r = pthread_mutexattr_destroy(&mutexattr))) {
-        dnf_error(ch->name, "pthread_mutexattr_destroy\n");
+    if ((r = cd_mutex_init(&ch->hdr->mutex, NULL))) {
+        dnf_error(ch->name, "cd_mutex_init, ret: %d\n", r);
         goto exit_free_mmap;
     }
 
-    pthread_condattr_t condattr;
-    if ((r = pthread_condattr_init(&condattr))) {
-        dnf_error(ch->name, "pthread_condattr_init\n");
-        goto exit_free_mmap;
-    }
-    if ((r = pthread_condattr_setpshared(&condattr, PTHREAD_PROCESS_SHARED))) {
-        dnf_error(ch->name, "pthread_condattr_setpshared\n");
-        goto exit_free_mmap;
-    }
-    if ((r = pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC))) {
-        dnf_error(ch->name, "pthread_condattr_setclock\n");
-        goto exit_free_mmap;
-    }
-    if ((r = pthread_cond_init(&ch->hdr->cond, &condattr))) {
-        dnf_error(ch->name, "pthread_cond_init\n");
-        goto exit_free_mmap;
-    }
-    if ((r = pthread_condattr_destroy(&condattr))) {
-        dnf_error(ch->name, "pthread_condattr_destroy\n");
+    if ((r = cd_cond_init(&ch->hdr->cond, NULL))) {
+        dnf_error(ch->name, "cd_cond_init\n");
         goto exit_free_mmap;
     }
 
@@ -255,15 +207,15 @@ cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
     cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_PUB);
 
-    if (pthread_mutex_lock(&hdr->mutex)) {
+    if (cd_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return NULL;
     }
     while (!(nd = rlist_get_entry(hdr, &hdr->free, cdipc_nd_t))) {
         if (abstime) {
-            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+            r = cd_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         } else {
-            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+            r = cd_cond_wait(&hdr->cond, &hdr->mutex);
         }
         if (r == ETIMEDOUT) {
             break;
@@ -278,7 +230,7 @@ cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
         nd->pub_id_bk = pub->id;
         nd->sub_ref = 0;
     }
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_mutex_unlock(&hdr->mutex);
     return nd;
 }
 
@@ -290,7 +242,7 @@ int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
 
-    if (pthread_mutex_lock(&hdr->mutex)) {
+    if (cd_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -308,9 +260,9 @@ int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
             break;
 
         if (abstime) {
-            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+            r = cd_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         } else {
-            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+            r = cd_cond_wait(&hdr->cond, &hdr->mutex);
         }
         if (r == ETIMEDOUT) {
             break;
@@ -347,10 +299,10 @@ int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
             dnf_debug(ch->name, "drop\n");
             rlist_put(hdr, &hdr->free, &nd->node);
         }
-        pthread_cond_broadcast(&hdr->cond);
+        cd_cond_broadcast(&hdr->cond);
     }
 
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_mutex_unlock(&hdr->mutex);
     return r;
 }
 
@@ -362,16 +314,16 @@ int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
 
-    if (pthread_mutex_lock(&hdr->mutex)) {
+    if (cd_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
 
     while (nd->sub_ref & 1) {
         if (abstime) {
-            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+            r = cd_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         } else {
-            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+            r = cd_cond_wait(&hdr->cond, &hdr->mutex);
         }
         if (r == ETIMEDOUT) {
             break;
@@ -381,7 +333,7 @@ int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
         }
     }
 
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_mutex_unlock(&hdr->mutex);
     return r;
 }
 
@@ -391,15 +343,15 @@ int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB && hdr->type == CDIPC_SERVICE);
 
-    if (pthread_mutex_lock(&hdr->mutex)) {
+    if (cd_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
     nd->pub_id = -1;
     if (!nd->sub_ref && nd->pub_id < 0)
         rlist_put(hdr, &hdr->free, &nd->node);
-    pthread_cond_broadcast(&hdr->cond);
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_cond_broadcast(&hdr->cond);
+    cd_mutex_unlock(&hdr->mutex);
     return 0;
 }
 
@@ -414,7 +366,7 @@ cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_SUB);
 
-    if (pthread_mutex_lock(&hdr->mutex)) {
+    if (cd_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return NULL;
     }
@@ -422,9 +374,9 @@ cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
 pick_node:
     while (!(wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t))) {
         if (abstime) {
-            r = pthread_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
+            r = cd_cond_timedwait(&hdr->cond, &hdr->mutex, abstime);
         } else {
-            r = pthread_cond_wait(&hdr->cond, &hdr->mutex);
+            r = cd_cond_wait(&hdr->cond, &hdr->mutex);
         }
         if (r == ETIMEDOUT) {
             break;
@@ -443,13 +395,13 @@ pick_node:
                 rlist_put(hdr, &hdr->free, &nd->node);
             nd = NULL;
             df_debug("avoid abort node\n");
-            pthread_cond_broadcast(&hdr->cond);
+            cd_cond_broadcast(&hdr->cond);
             goto pick_node;
         }
     }
 
-    pthread_cond_broadcast(&hdr->cond);
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_cond_broadcast(&hdr->cond);
+    cd_mutex_unlock(&hdr->mutex);
     return nd;
 }
 
@@ -465,7 +417,7 @@ int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)
         return -1;
     }
 
-    if (pthread_mutex_lock(&hdr->mutex)) {
+    if (cd_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -480,8 +432,8 @@ int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)
 
     // TODO: set nd status
 
-    pthread_cond_broadcast(&hdr->cond);
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_cond_broadcast(&hdr->cond);
+    cd_mutex_unlock(&hdr->mutex);
     return r;
 }
 
@@ -491,7 +443,7 @@ int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
     cdipc_sub_t *sub = ch->sub;
     assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_TOPIC);
 
-    if (pthread_mutex_lock(&hdr->mutex)) {
+    if (cd_mutex_lock(&hdr->mutex)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -500,7 +452,7 @@ int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
     if (!nd->sub_ref && nd->pub_id < 0)
         rlist_put(hdr, &hdr->free, &nd->node);
 
-    pthread_cond_broadcast(&hdr->cond);
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_cond_broadcast(&hdr->cond);
+    cd_mutex_unlock(&hdr->mutex);
     return 0;
 }

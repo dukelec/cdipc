@@ -13,7 +13,8 @@ INCLUDES = \
 
 C_SOURCES = \
 ./cdipc.c \
-./utils/rlist.c
+./utils/rlist.c \
+./utils/cd_futex.c
 
 
 GIT_VERSION := $(shell git describe --dirty --always --tags)
@@ -28,7 +29,7 @@ vpath %.c $(sort $(dir $(C_SOURCES)))
 
 I_INCLUDES = $(foreach includedir,$(INCLUDES),-I$(includedir))
 CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC
-LDFLAGS = -lpthread -lrt -shared
+LDFLAGS = -lrt -shared
 
 DEPS = $(foreach includedir,$(INCLUDES),$(wildcard $(includedir)/*.h))
 

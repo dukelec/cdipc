@@ -62,8 +62,8 @@ typedef struct {
     int             max_nd;
     size_t          max_len;
 
-    pthread_mutex_t mutex;
-    pthread_cond_t  cond;
+    cd_mutex_t      mutex;
+    cd_cond_t       cond;
 
     rlist_head_t    free_wp;
     rlist_head_t    free;

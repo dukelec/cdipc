@@ -7,8 +7,8 @@
  * Author: Duke Fong <duke@dukelec.com>
  */
 
+#include <time.h>
 #include <getopt.h>
-#include <pthread.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <assert.h>
@@ -17,6 +17,7 @@
 #include <cdipc/utils/cd_debug.h>
 #include <cdipc/utils/rlist.h>
 #include <cdipc/utils/cd_time.h>
+#include <cdipc/utils/cd_futex.h>
 #include <cdipc/cdipc.h>
 
 
@@ -477,7 +478,7 @@ int cmd_dump(int argc, char **argv)
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
-    pthread_mutex_lock(&hdr->mutex);
+    cd_mutex_lock(&hdr->mutex);
 
     printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
             hdr->type == CDIPC_SERVICE ? "service" : "topic",
@@ -521,7 +522,7 @@ int cmd_dump(int argc, char **argv)
         printf("]\n");
     }
 
-    pthread_mutex_unlock(&hdr->mutex);
+    cd_mutex_unlock(&hdr->mutex);
     return 0;
 }
 
