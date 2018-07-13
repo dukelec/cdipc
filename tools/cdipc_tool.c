@@ -74,6 +74,7 @@ const char *usage_get = \
     "  --help           # this help message\n"
     "  --name NAME      # topic or service name\n"
     "  --id ID          # sub id, default 0\n"
+    "  --recover        # run recover at first, default false\n"
     "  --timeout SEC    # default 10 sec\n"
     "  --ret-dat STRING # return data, default \"ret msg\"\n";
 
@@ -342,6 +343,7 @@ enum OPT_GET_IDX {
     OPT_GET_HELP = 1000,
     OPT_GET_NAME,
     OPT_GET_ID,
+    OPT_GET_RECOVER,
     OPT_GET_TIMEOUT,
     OPT_GET_RET_DAT
 };
@@ -350,6 +352,7 @@ static struct option opt_get[] = {
         { "help",       no_argument, NULL, OPT_GET_HELP },
         { "name",       required_argument, NULL, OPT_GET_NAME },
         { "id",         required_argument, NULL, OPT_GET_ID },
+        { "recover",    no_argument, NULL, OPT_GET_RECOVER },
         { "timeout",    required_argument, NULL, OPT_GET_TIMEOUT },
         { "ret-dat",    required_argument, NULL, OPT_GET_RET_DAT },
         { 0, 0, 0, 0 }
@@ -363,6 +366,7 @@ int cmd_get(int argc, char **argv)
     cdipc_nd_t *nd;
     char name[NAME_MAX] = { 0 };
     int id = 0;
+    bool recover = false;
     float timeout = 10;
     char *ret_dat = "ret msg";
 
@@ -388,6 +392,10 @@ int cmd_get(int argc, char **argv)
         case OPT_GET_ID:
             id = atol(optarg);
             df_debug("set id: %d\n", id);
+            break;
+        case OPT_GET_RECOVER:
+            recover = true;
+            printf("selecting recover\n");
             break;
         case OPT_GET_TIMEOUT:
             timeout = atof(optarg);
@@ -416,9 +424,8 @@ int cmd_get(int argc, char **argv)
     if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
         return -1;
     }
-    if ((r = cdipc_recover(ch)) > 0) {
-        printf("recover: %d\n", r);
-    }
+    if (recover)
+        printf("recover: %d\n", cdipc_recover(ch));
 
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
