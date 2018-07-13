@@ -20,9 +20,80 @@
 #include <cdipc/utils/cd_futex.h>
 #include <cdipc/cdipc.h>
 
+const char *usage_main = \
+    "Usage: cdipc [create|unlink|put|get|pend-cfg|dump] ...\n"
+    "  create:   create a topic or service, under /dev/shm/\n"
+    "  unlink:   delete a topic or service\n"
+    "  put:      publish a message to a topic or request to service\n"
+    "  get:      subscriber to a topic, or wait and reply for service\n"
+    "  pend-cfg: set max_len and need_wait flag for a subscriber\n"
+    "  dump:     dump topic or service information for debug\n"
+    "\n"
+    "Example for topic:\n"
+    "  cdipc create --name test   # create a topic with 2 pub and 2 sub\n"
+    "                             # 5 nodes of 256 bytes by default\n"
+    "  cdipc pend-cfg --name test # change max_len to 2 for first sub\n"
+    "                             # max_len is 0 and need_wait is false after create\n"
+    "  cdipc get --name test      # wait on sub id 0\n"
+    "  cdipc put --name test      # publish string \"test msg\" to the topic\n"
+    "\n"
+    "Example for service:\n"
+    "  cdipc create --name test --type service\n"
+    "  cdipc pend-cfg --name test\n"
+    "  cdipc get --name test      # reply \"ret msg\" when whatever received\n"
+    "  cdipc put --name test      # send requst and wait for reply\n"
+    "\n"
+    "You can override default values by specify them through arguments,\n"
+    "type cdipc CMD --help for details\n";
+
+const char *usage_create = \
+    "Arguments for create:\n"
+    "  --help           # this help message\n"
+    "  --name NAME      # topic or service name\n"
+    "  --type TYPE      # topic by default, or specify to service\n"
+    "  --max-pub NUM    # max pub, default 2\n"
+    "  --max-sub NUM    # max sub, default 2\n"
+    "  --max-nd NUM     # max nd, default 5\n"
+    "  --max-len SIZE   # max data size in nd, default 256 bytes\n";
+
+const char *usage_unlink = \
+    "Arguments for unlink:\n"
+    "  --help           # this help message\n"
+    "  --name NAME      # topic or service name\n";
+
+const char *usage_put = \
+    "Arguments for put:\n"
+    "  --help           # this help message\n"
+    "  --name NAME      # topic or service name\n"
+    "  --id ID          # pub id, default 0\n"
+    "  --timeout SEC    # default wait for ever\n"
+    "  --dat STRING     # send data string, default \"test msg\"\n";
+
+const char *usage_get = \
+    "Arguments for get:\n"
+    "  --help           # this help message\n"
+    "  --name NAME      # topic or service name\n"
+    "  --id ID          # sub id, default 0\n"
+    "  --timeout SEC    # default wait for ever\n"
+    "  --ret-dat STRING # return data, default \"ret msg\"\n";
+
+const char *usage_pend_cfg = \
+    "Arguments for pend-cfg:\n"
+    "  --help           # this help message\n"
+    "  --name NAME      # topic or service name\n"
+    "  --id ID          # sub id, default 0\n"
+    "  --wait BOOL      # need_wait, default false\n"
+    "  --max NUM        # max pend, default 2\n";
+
+const char *usage_dump = \
+    "Arguments for dump:\n"
+    "  --help           # this help message\n"
+    "  --name NAME      # topic or service name\n";
+
 
 enum OPT_CREATE_IDX {
-    OPT_CREATE_NAME = 1000,
+    OPT_CREATE_HELP = 1000,
+    OPT_CREATE_NAME,
     OPT_CREATE_TYPE,
     OPT_CREATE_MAX_PUB,
     OPT_CREATE_MAX_SUB,
@@ -31,6 +102,7 @@ enum OPT_CREATE_IDX {
 };
 
 static struct option opt_create[] = {
+        { "help",       no_argument, NULL, OPT_CREATE_HELP },
         { "name",       required_argument, NULL, OPT_CREATE_NAME },
         { "type",       required_argument, NULL, OPT_CREATE_TYPE },
         { "max-pub",    required_argument, NULL, OPT_CREATE_MAX_PUB },
@@ -61,6 +133,9 @@ int cmd_create(int argc, char **argv)
             break;
         }
         switch (option) {
+        case OPT_CREATE_HELP:
+            printf("%s", usage_create);
+            exit(0);
         case OPT_CREATE_NAME:
             strncpy(name, optarg, NAME_MAX);
             df_debug("set name: %s\n", name);
@@ -97,7 +172,7 @@ int cmd_create(int argc, char **argv)
         }
     }
     if (!strlen(name)) {
-        df_error("--name must specified\n");
+        df_error("--name must specified\n\n%s", usage_create);
         return -1;
     }
     df_debug("name: %s; type: %d, pub: %d, sub: %d, nd: %d, len: %ld\n",
@@ -107,10 +182,12 @@ int cmd_create(int argc, char **argv)
 
 
 enum OPT_UNLINK_IDX {
-    OPT_UNLINK_NAME = 1000
+    OPT_UNLINK_HELP = 1000,
+    OPT_UNLINK_NAME
 };
 
 static struct option opt_unlink[] = {
+        { "help",       no_argument, NULL, OPT_UNLINK_HELP },
         { "name",       required_argument, NULL, OPT_UNLINK_NAME },
         { 0, 0, 0, 0 }
 };
@@ -131,6 +208,9 @@ int cmd_unlink(int argc, char **argv)
             break;
         }
         switch (option) {
+        case OPT_UNLINK_HELP:
+            printf("%s", usage_unlink);
+            exit(0);
         case OPT_UNLINK_NAME:
             strncpy(name, optarg, NAME_MAX);
             df_debug("set name: %s\n", name);
@@ -142,7 +222,7 @@ int cmd_unlink(int argc, char **argv)
         }
     }
     if (!strlen(name)) {
-        df_error("--name must specified\n");
+        df_error("--name must specified\n\n%s", usage_unlink);
         return -1;
     }
     return cdipc_unlink(name);
@@ -150,13 +230,15 @@ int cmd_unlink(int argc, char **argv)
 
 
 enum OPT_PUT_IDX {
-    OPT_PUT_NAME = 1000,
+    OPT_PUT_HELP = 1000,
+    OPT_PUT_NAME,
     OPT_PUT_ID,
     OPT_PUT_TIMEOUT,
     OPT_PUT_DAT
 };
 
 static struct option opt_put[] = {
+        { "help",       no_argument, NULL, OPT_PUT_HELP },
         { "name",       required_argument, NULL, OPT_PUT_NAME },
         { "id",         required_argument, NULL, OPT_PUT_ID },
         { "timeout",    required_argument, NULL, OPT_PUT_TIMEOUT },
@@ -187,6 +269,9 @@ int cmd_put(int argc, char **argv)
             break;
         }
         switch (option) {
+        case OPT_PUT_HELP:
+            printf("%s", usage_put);
+            exit(0);
         case OPT_PUT_NAME:
             strncpy(name, optarg, NAME_MAX);
             df_debug("set name: %s\n", name);
@@ -196,7 +281,7 @@ int cmd_put(int argc, char **argv)
             df_debug("set id: %d\n", id);
             break;
         case OPT_PUT_TIMEOUT:
-            timeout_ms = atol(optarg);
+            timeout_ms = atol(optarg); // TODO: change unit to sec
             df_debug("set timeout_ms: %d\n", timeout_ms);
             break;
         case OPT_PUT_DAT:
@@ -210,7 +295,7 @@ int cmd_put(int argc, char **argv)
         }
     }
     if (!strlen(name)) {
-        df_error("--name must specified\n");
+        df_error("--name must specified\n\n%s", usage_put);
         return -1;
     }
 
@@ -221,6 +306,9 @@ int cmd_put(int argc, char **argv)
 
     if ((r = cdipc_open(ch, name, CDIPC_PUB, id))) {
         return -1;
+    }
+    if ((r = cdipc_recover(ch)) > 0) {
+        printf("recover: %d\n", r);
     }
     if (!(nd = cdipc_pub_alloc(ch, &abstime))) {
         return -1;
@@ -251,13 +339,15 @@ int cmd_put(int argc, char **argv)
 
 
 enum OPT_GET_IDX {
-    OPT_GET_NAME = 1000,
+    OPT_GET_HELP = 1000,
+    OPT_GET_NAME,
     OPT_GET_ID,
     OPT_GET_TIMEOUT,
     OPT_GET_RET_DAT
 };
 
 static struct option opt_get[] = {
+        { "help",       no_argument, NULL, OPT_GET_HELP },
         { "name",       required_argument, NULL, OPT_GET_NAME },
         { "id",         required_argument, NULL, OPT_GET_ID },
         { "timeout",    required_argument, NULL, OPT_GET_TIMEOUT },
@@ -288,6 +378,9 @@ int cmd_get(int argc, char **argv)
             break;
         }
         switch (option) {
+        case OPT_GET_HELP:
+            printf("%s", usage_get);
+            exit(0);
         case OPT_GET_NAME:
             strncpy(name, optarg, NAME_MAX);
             df_debug("set name: %s\n", name);
@@ -311,7 +404,7 @@ int cmd_get(int argc, char **argv)
         }
     }
     if (!strlen(name)) {
-        df_error("--name must specified\n");
+        df_error("--name must specified\n\n%s", usage_get);
         return -1;
     }
 
@@ -322,6 +415,9 @@ int cmd_get(int argc, char **argv)
 
     if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
         return -1;
+    }
+    if ((r = cdipc_recover(ch)) > 0) {
+        printf("recover: %d\n", r);
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
@@ -350,13 +446,15 @@ int cmd_get(int argc, char **argv)
 
 
 enum OPT_PEND_CFG_IDX {
-    OPT_PEND_CFG_NAME = 1000,
+    OPT_PEND_CFG_HELP = 1000,
+    OPT_PEND_CFG_NAME,
     OPT_PEND_CFG_ID,
     OPT_PEND_CFG_WAIT,
     OPT_PEND_CFG_MAX
 };
 
 static struct option opt_pend_cfg[] = {
+        { "help",       no_argument, NULL, OPT_PEND_CFG_HELP },
         { "name",       required_argument, NULL, OPT_PEND_CFG_NAME },
         { "id",         required_argument, NULL, OPT_PEND_CFG_ID },
         { "wait",       required_argument, NULL, OPT_PEND_CFG_WAIT },
@@ -386,6 +484,9 @@ int cmd_pend_cfg(int argc, char **argv)
             break;
         }
         switch (option) {
+        case OPT_PEND_CFG_HELP:
+            printf("%s", usage_pend_cfg);
+            exit(0);
         case OPT_PEND_CFG_NAME:
             strncpy(name, optarg, NAME_MAX);
             df_debug("set name: %s\n", name);
@@ -413,7 +514,7 @@ int cmd_pend_cfg(int argc, char **argv)
         }
     }
     if (!strlen(name)) {
-        df_error("--name must specified\n");
+        df_error("--name must specified\n\n%s", usage_pend_cfg);
         return -1;
     }
 
@@ -431,10 +532,12 @@ int cmd_pend_cfg(int argc, char **argv)
 
 
 enum OPT_DUMP_IDX {
-    OPT_DUMP_NAME = 1000
+    OPT_DUMP_HELP = 1000,
+    OPT_DUMP_NAME
 };
 
 static struct option opt_dump[] = {
+        { "help",       no_argument, NULL, OPT_DUMP_HELP },
         { "name",       required_argument, NULL, OPT_DUMP_NAME },
         { 0, 0, 0, 0 }
 };
@@ -458,6 +561,9 @@ int cmd_dump(int argc, char **argv)
             break;
         }
         switch (option) {
+        case OPT_DUMP_HELP:
+            printf("%s", usage_dump);
+            exit(0);
         case OPT_DUMP_NAME:
             strncpy(name, optarg, NAME_MAX);
             df_debug("set name: %s\n", name);
@@ -469,7 +575,7 @@ int cmd_dump(int argc, char **argv)
         }
     }
     if (!strlen(name)) {
-        df_error("--name must specified\n");
+        df_error("--name must specified\n\n%s", usage_dump);
         return -1;
     }
 
@@ -550,7 +656,7 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("Usage: cdipc [create|unlink|put|get|pend-cfg|dump] ...\n");
+    printf("%s", usage_main);
     return -1;
 }
 

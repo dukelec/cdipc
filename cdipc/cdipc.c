@@ -180,6 +180,55 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
     return 0;
 }
 
+int cdipc_recover(cdipc_ch_t *ch)
+{
+    int n = 0;
+    int i;
+    cdipc_hdr_t *hdr = ch->hdr;
+    cdipc_wp_t *wps = (void *)ch->subs + sizeof(cdipc_sub_t) * hdr->max_sub;
+    cdipc_nd_t *nds = (void *)wps + sizeof(cdipc_wp_t) * hdr->max_nd * hdr->max_sub;
+
+    if (cd_mutex_lock(&hdr->mutex)) {
+        dnf_error(ch->name, "mutex_lock\n");
+        return -1;
+    }
+
+    if (ch->role == CDIPC_SUB) {
+        cdipc_sub_t *sub = ch->sub;
+        for (i = 0; i < hdr->max_nd; i++) {
+            cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + hdr->max_len) * i;
+            if (nd->sub_ref & (1 << sub->id)) {
+                n++;
+                nd->sub_ref &= ~(1 << sub->id);
+                nd->ret_len = 0;
+                if (!nd->sub_ref && nd->pub_id < 0)
+                    rlist_put(hdr, &hdr->free, &nd->node);
+            }
+        }
+        if (n) {
+            cdipc_wp_t *wp;
+            while ((wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t)))
+                rlist_put(hdr, &hdr->free_wp, &wp->node);
+        }
+    } else if (ch->role == CDIPC_PUB) {
+        cdipc_pub_t *pub = ch->pub;
+        for (i = 0; i < hdr->max_nd; i++) {
+            cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + hdr->max_len) * i;
+            if (nd->pub_id == pub->id) {
+                n++;
+                nd->pub_id = -1;
+                if (!nd->sub_ref && nd->pub_id < 0)
+                    rlist_put(hdr, &hdr->free, &nd->node);
+            }
+        }
+    }
+
+    if (n)
+        cd_cond_broadcast(&hdr->cond);
+    cd_mutex_unlock(&hdr->mutex);
+    return n;
+}
+
 int cdipc_close(cdipc_ch_t *ch)
 {
     if (munmap(ch->hdr, ch->map_len)) {

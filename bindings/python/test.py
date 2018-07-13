@@ -7,12 +7,16 @@
 # Author: Duke Fong <duke@dukelec.com>
 
 from cdipc import *
+import signal
+
+signal.signal(signal.SIGINT, signal.SIG_DFL) # allow exit by ctrl-c
 
 now = timespec()
 abstime = timespec()
 
 ch = cdipc_ch_t()
 cdipc_open(ch, "test", CDIPC_SUB, 0)
+cdipc_recover(ch)
 
 clock_gettime(CLOCK_MONOTONIC, now)
 us2tv(tv2us(now) + 5000 * 1000, abstime);

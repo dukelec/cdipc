@@ -116,6 +116,7 @@ int cdipc_create(const char *name, cdipc_type_t type,
         int max_pub, int max_sub, int max_nd, size_t max_len);
 int cdipc_unlink(const char *name);
 int cdipc_open(cdipc_ch_t *ch, const char *name, cdipc_role_t role, int id);
+int cdipc_recover(cdipc_ch_t *ch);
 int cdipc_close(cdipc_ch_t *ch);
 
 cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime);
