@@ -4,14 +4,7 @@
  * Copyright (c) 2018, DUKELEC, Inc.
  * All rights reserved.
  *
- * Reference and copy from:
- *  https://www.remlab.net/op/futex-condvar.shtml
- *  https://locklessinc.com/articles/locks/
- *  https://locklessinc.com/articles/mutex_cv_futex/
- *
- * TODO: use priority-inheritance futexes
- *
- * Organized by: Duke Fong <duke@dukelec.com>
+ * Author: Duke Fong <duke@dukelec.com>
  */
 
 #include <pthread.h>
@@ -21,48 +14,20 @@
 #include <sys/syscall.h>
 #include <linux/futex.h>
 #include <limits.h>
+#include <sys/types.h>
+#include <stdatomic.h>
 
 #include "cd_utils.h"
 #include "cd_debug.h"
 #include "cd_futex.h"
 
-#define atomic_xadd(P, V)       __sync_fetch_and_add((P), (V))
-#define cmpxchg(P, O, N)        __sync_val_compare_and_swap((P), (O), (N))
-#define atomic_inc(P)           __sync_add_and_fetch((P), 1)
-#define atomic_dec(P)           __sync_add_and_fetch((P), -1)
-#define atomic_add(P, V)        __sync_add_and_fetch((P), (V))
-#define atomic_set_bit(P, V)    __sync_or_and_fetch((P), 1<<(V))
-#define atomic_clear_bit(P, V)  __sync_and_and_fetch((P), ~(1<<(V)))
-
-/* Pause instruction to prevent excess processor bus usage */
-#define cpu_relax() asm volatile("pause\n": : :"memory")
-
-/* Atomic exchange (of various sizes) */
-static inline void *xchg_64(void *ptr, void *x)
-{
-    __asm__ __volatile__("xchgq %0,%1"
-                :"=r" ((unsigned long long) x)
-                :"m" (*(volatile long long *)ptr), "0" ((unsigned long long) x)
-                :"memory");
-
-    return x;
-}
-
-static inline unsigned xchg_32(void *ptr, unsigned x)
-{
-    __asm__ __volatile__("xchgl %0,%1"
-                :"=r" ((unsigned) x)
-                :"m" (*(volatile unsigned *)ptr), "0" (x)
-                :"memory");
-
-    return x;
-}
-
 
 static int sys_futex(void *addr1, int op, int val1,
-        struct timespec *timeout, void *addr2, int val3)
+        const struct timespec *timeout, void *addr2, int val3)
 {
-    return syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
+    int r = syscall(SYS_futex, addr1, op, val1, timeout, addr2, val3);
+
+    return r == 0 ? 0 : errno;
 }
 
 
@@ -73,112 +38,76 @@ int cd_mutex_init(cd_mutex_t *m, void *_a)
     return 0;
 }
 
-int cd_mutex_lock(cd_mutex_t *m)
+int cd_mutex_lock(cd_mutex_t *m, const struct timespec *abstime)
 {
-    int i, c;
+    // TODO: try to avoid system call by atomic operations
 
-    /* Spin and try to take lock */
-    for (i = 0; i < 100; i++)
-    {
-        c = cmpxchg(m, 0, 1);
-        if (!c)
-            return 0;
-
-        cpu_relax();
-    }
-
-    /* The lock is now contended */
-    if (c == 1)
-        c = xchg_32(m, 2);
-
-    while (c) {
-        /* Wait in the kernel */
-        sys_futex(m, FUTEX_WAIT, 2, NULL, NULL, 0);
-        c = xchg_32(m, 2);
-    }
-
-    return 0;
+    // absolute timeout, measured against the CLOCK_REALTIME
+    // if m == 0, set m to cur pid
+    // if m != 0, set FUTEX_WAITERS of m
+    // all 0 and NULL are ignored
+    return sys_futex(m, FUTEX_LOCK_PI, 0, abstime, NULL, 0);
 }
 
 int cd_mutex_unlock(cd_mutex_t *m)
 {
-    int i;
-
-    /* Unlock, and if not contended then exit. */
-    if (*m == 2)
-        *m = 0;
-    else if (xchg_32(m, 0) == 1)
-        return 0;
-
-    /* Spin and hope someone takes the lock */
-    for (i = 0; i < 200; i++) {
-        if (*m) {
-            /* Need to set to state 2 because there may be waiters */
-            if (cmpxchg(m, 1, 2))
-                return 0;
-        }
-        cpu_relax();
-    }
-
-    /* We need to wake someone up */
-    sys_futex(m, FUTEX_WAKE, 1, NULL, NULL, 0);
-
-    return 0;
+    // all 0 and NULL are ignored
+    return sys_futex(m, FUTEX_UNLOCK_PI, 0, NULL, NULL, 0);
 }
 
 int cd_mutex_trylock(cd_mutex_t *m)
 {
-    /* Try to take the lock, if is currently unlocked */
-    unsigned c = cmpxchg(m, 0, 1);
-    if (!c)
-        return 0;
-    return EBUSY;
+    // all 0 and NULL are ignored
+    return sys_futex(m, FUTEX_TRYLOCK_PI, 0, NULL, NULL, 0);
 }
 
 
 int cd_cond_init(cd_cond_t *c, void *_a)
 {
     (void) _a;
-
-    /* Sequence variable doesn't actually matter, but keep valgrind happy */
-    c->seq = 0;
-
+    c->c = 0;
+    c->m = 0;
     return 0;
 }
 
 int cd_cond_signal(cd_cond_t *c)
 {
-    /* We are waking someone up */
-    atomic_add(&c->seq, 1);
+    atomic_fetch_add(&c->c, 1);
 
-    /* Wake up a thread */
-    sys_futex(&c->seq, FUTEX_WAKE, 1, NULL, NULL, 0);
-
-    return 0;
+    return sys_futex(&c->c, FUTEX_CMP_REQUEUE_PI, 1, (void *)1, &c->m, c->c);
+    // return EAGAIN if *addr1 != val3 at the time of the call
 }
 
 int cd_cond_broadcast(cd_cond_t *c)
 {
-    /* We are waking everyone up */
-    atomic_add(&c->seq, 1);
+    int r;
+    atomic_fetch_add(&c->c, 1);
 
-    /* Wake one thread, and requeue the rest on the mutex */
-    sys_futex(&c->seq, FUTEX_WAKE, INT_MAX, NULL, NULL, 0);
-
-    return 0;
+    r = sys_futex(&c->c, FUTEX_CMP_REQUEUE_PI, 1, (void *)INT_MAX, &c->m, c->c);
+    // return EAGAIN if *addr1 != val3 at the time of the call
+    return r;
 }
 
-int cd_cond_wait(cd_cond_t *c, cd_mutex_t *m)
+int cd_cond_wait(cd_cond_t *c, cd_mutex_t *m, const struct timespec *abstime)
 {
-    int seq = c->seq;
+    int r;
+    int seq;
 
+retry:
+    seq = c->c;
     cd_mutex_unlock(m);
 
-    sys_futex(&c->seq, FUTEX_WAIT, seq, NULL, NULL, 0);
+    // val3 (last arg) is ignored
+    r = sys_futex(&c->c, FUTEX_WAIT_REQUEUE_PI, seq, abstime, &c->m, 0);
+    // return EAGAIN if *addr1 != val1 at the time of the call
 
-    while (xchg_32(m, 2))
-        sys_futex(m, FUTEX_WAIT, 2, NULL, NULL, 0);
+    if (r == EAGAIN) {
+        cd_mutex_lock(m, NULL);
+        goto retry;
+    }
 
-    return 0;
+    cd_mutex_unlock(&c->m);
+
+    cd_mutex_lock(m, NULL);
+    return r;
 }
-

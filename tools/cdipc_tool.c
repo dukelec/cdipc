@@ -66,7 +66,7 @@ const char *usage_put = \
     "  --help           # this help message\n"
     "  --name NAME      # topic or service name\n"
     "  --id ID          # pub id, default 0\n"
-    "  --timeout SEC    # default wait for ever\n"
+    "  --timeout SEC    # default 10 sec\n"
     "  --dat STRING     # send data string, default \"test msg\"\n";
 
 const char *usage_get = \
@@ -74,7 +74,7 @@ const char *usage_get = \
     "  --help           # this help message\n"
     "  --name NAME      # topic or service name\n"
     "  --id ID          # sub id, default 0\n"
-    "  --timeout SEC    # default wait for ever\n"
+    "  --timeout SEC    # default 10 sec\n"
     "  --ret-dat STRING # return data, default \"ret msg\"\n";
 
 const char *usage_pend_cfg = \
@@ -254,7 +254,7 @@ int cmd_put(int argc, char **argv)
     cdipc_nd_t *nd;
     char name[NAME_MAX] = { 0 };
     int id = 0;
-    int timeout_ms = 10000;
+    float timeout = 10;
     char *dat = "test msg";
 
     while (true) {
@@ -281,8 +281,8 @@ int cmd_put(int argc, char **argv)
             df_debug("set id: %d\n", id);
             break;
         case OPT_PUT_TIMEOUT:
-            timeout_ms = atol(optarg); // TODO: change unit to sec
-            df_debug("set timeout_ms: %d\n", timeout_ms);
+            timeout = atof(optarg);
+            df_debug("set timeout: %f\n", timeout);
             break;
         case OPT_PUT_DAT:
             dat = strdup(optarg);
@@ -302,7 +302,7 @@ int cmd_put(int argc, char **argv)
     struct timespec now;
     struct timespec abstime;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    us2tv(tv2us(&now) + timeout_ms * 1000, &abstime);
+    us2tv(tv2us(&now) + timeout * 1000000, &abstime);
 
     if ((r = cdipc_open(ch, name, CDIPC_PUB, id))) {
         return -1;
@@ -363,7 +363,7 @@ int cmd_get(int argc, char **argv)
     cdipc_nd_t *nd;
     char name[NAME_MAX] = { 0 };
     int id = 0;
-    int timeout_ms = 10000;
+    float timeout = 10;
     char *ret_dat = "ret msg";
 
     while (true) {
@@ -390,8 +390,8 @@ int cmd_get(int argc, char **argv)
             df_debug("set id: %d\n", id);
             break;
         case OPT_GET_TIMEOUT:
-            timeout_ms = atol(optarg);
-            df_debug("set timeout_ms: %d\n", timeout_ms);
+            timeout = atof(optarg);
+            df_debug("set timeout: %f\n", timeout);
             break;
         case OPT_GET_RET_DAT:
             ret_dat = strdup(optarg);
@@ -411,7 +411,7 @@ int cmd_get(int argc, char **argv)
     struct timespec now;
     struct timespec abstime;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    us2tv(tv2us(&now) + timeout_ms * 1000, &abstime);
+    us2tv(tv2us(&now) + timeout * 1000000, &abstime);
 
     if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
         return -1;
@@ -584,7 +584,9 @@ int cmd_dump(int argc, char **argv)
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
-    cd_mutex_lock(&hdr->mutex);
+    cd_mutex_lock(&hdr->mutex, NULL);
+
+    printf("futex: %08x, cond: %08x %08x\n", hdr->mutex, hdr->cond.c, hdr->cond.m);
 
     printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
             hdr->type == CDIPC_SERVICE ? "service" : "topic",
