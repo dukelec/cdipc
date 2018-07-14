@@ -10,6 +10,7 @@
 #include <time.h>
 #include <getopt.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <fcntl.h>
 #include <assert.h>
 
@@ -558,6 +559,7 @@ int cmd_dump(int argc, char **argv)
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
     char name[NAME_MAX] = { 0 };
+    int tid = syscall(SYS_gettid);
 
     while (true) {
         int option = getopt_long(argc, argv, "", opt_dump, NULL);
@@ -595,7 +597,7 @@ int cmd_dump(int argc, char **argv)
 
     cdipc_hdr_t *hdr = ch->hdr;
     printf("futex: %08x, cond: %08x %08x\n", hdr->mutex, hdr->cond.c, hdr->cond.m);
-    cd_mutex_lock(&hdr->mutex, NULL);
+    cd_mutex_lock(&hdr->mutex, tid, NULL);
 
     printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
             hdr->type == CDIPC_SERVICE ? "service" : "topic",
@@ -634,7 +636,7 @@ int cmd_dump(int argc, char **argv)
         printf("]\n");
     }
 
-    cd_mutex_unlock(&hdr->mutex);
+    cd_mutex_unlock(&hdr->mutex, tid);
     return 0;
 }
 

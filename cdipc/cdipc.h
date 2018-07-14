@@ -45,10 +45,12 @@ typedef struct {
 
 typedef struct {
     int             id;
-} cdipc_pub_t;                  // TODO: add process pid, also for sub_t
+    int             tid;        // thread ID (TID; see gettid(2))
+} cdipc_pub_t;
 
 typedef struct {
     int             id;
+    int             tid;        // thread ID
     int             max_len;
     bool            need_wait;
     rlist_head_t    pend_head;
