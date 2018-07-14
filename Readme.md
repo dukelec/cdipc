@@ -45,7 +45,7 @@ For use as service, only one replier is allowed.
 1. The requester request a free node (as same as topic).
 2. The requester append the node to replier's node_head (as same as topic, without clear pub reference).
 3. The replier pick up a node.
-4. The replier return data to requester (by simply clear reference map bit) (append after original data).
+4. The replier return data to requester (by simply clear reference map bit).
 5. The requester free the node after read return data.
 
 
@@ -53,7 +53,7 @@ For use as service, only one replier is allowed.
 
  - We could implement the channel data structure inside a centra server application (instead of shared memory), for cross platform purpose.
  - We could use different daemon application to export Topic and Service channel to different interface protocol, e.g. websocket, TCP/UDP socket, unix socket.
- - We could traversal all nodes to retrieve lost nodes depend on pub and sub reference, e.g. process exist on error.
+ - We could traversal all nodes to recover lost nodes depend on pub and sub reference, e.g. process exist on error.
 
 #### Logging
 

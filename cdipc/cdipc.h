@@ -30,10 +30,11 @@ typedef struct {
     uint64_t        sub_ref;    // reference map
                                 // TODO: add support for more than 64 bits
     int             pub_id;
-    int             pub_id_bk;  // for logging
+    int             pub_id_bk;  // for logging purpose
     bool            abort;
+
     size_t          len;
-    size_t          ret_len;    // service only, ret data after origin data
+    size_t          len_r;      // return data at dat + hdr->max_len
     uint8_t         dat[];
 } cdipc_nd_t;
 
@@ -61,6 +62,7 @@ typedef struct {
     int             max_sub;
     int             max_nd;
     size_t          max_len;
+    size_t          max_len_r;
 
     cd_mutex_t      mutex;
     cd_cond_t       cond;
@@ -77,8 +79,12 @@ typedef struct {
     cdipc_hdr_t     *hdr;
     size_t          map_len;
 
-    cdipc_pub_t     *pubs;  // beginning of pubs
-    cdipc_sub_t     *subs;  // beginning of subs
+    // save areas start address
+    cdipc_pub_t     *pubs;
+    cdipc_sub_t     *subs;
+    cdipc_wp_t      *wps;
+    cdipc_nd_t      *nds;
+    size_t          nd_len; // one nd size, include datas
 
     cdipc_role_t    role;
     cdipc_pub_t     *pub;   // owner self if owner is pub
@@ -112,8 +118,8 @@ static cdipc_wp_t *cd_r2wp(const void *base, cdipc_wp_t *wp)
     return (cdipc_wp_t *)((void *)wp + (ptrdiff_t)base);
 }
 
-int cdipc_create(const char *name, cdipc_type_t type,
-        int max_pub, int max_sub, int max_nd, size_t max_len);
+int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
+        int max_nd, size_t max_len, size_t max_len_r);
 int cdipc_unlink(const char *name);
 int cdipc_open(cdipc_ch_t *ch, const char *name, cdipc_role_t role, int id);
 int cdipc_recover(cdipc_ch_t *ch);

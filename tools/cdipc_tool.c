@@ -54,7 +54,8 @@ const char *usage_create = \
     "  --max-pub NUM    # max pub, default 2\n"
     "  --max-sub NUM    # max sub, default 2\n"
     "  --max-nd NUM     # max nd, default 5\n"
-    "  --max-len SIZE   # max data size in nd, default 256 bytes\n";
+    "  --max-len SIZE   # max data size in nd, default 256 bytes\n"
+    "  --max-len-r SIZE # max return size in nd, default 256 bytes\n";
 
 const char *usage_unlink = \
     "Arguments for unlink:\n"
@@ -74,7 +75,6 @@ const char *usage_get = \
     "  --help           # this help message\n"
     "  --name NAME      # topic or service name\n"
     "  --id ID          # sub id, default 0\n"
-    "  --recover        # run recover at first, default false\n"
     "  --timeout SEC    # default 10 sec\n"
     "  --ret-dat STRING # return data, default \"ret msg\"\n";
 
@@ -99,7 +99,8 @@ enum OPT_CREATE_IDX {
     OPT_CREATE_MAX_PUB,
     OPT_CREATE_MAX_SUB,
     OPT_CREATE_MAX_ND,
-    OPT_CREATE_MAX_LEN
+    OPT_CREATE_MAX_LEN,
+    OPT_CREATE_MAX_LEN_R
 };
 
 static struct option opt_create[] = {
@@ -110,6 +111,7 @@ static struct option opt_create[] = {
         { "max-sub",    required_argument, NULL, OPT_CREATE_MAX_SUB },
         { "max-nd",     required_argument, NULL, OPT_CREATE_MAX_ND },
         { "max-len",    required_argument, NULL, OPT_CREATE_MAX_LEN },
+        { "max-len-r",  required_argument, NULL, OPT_CREATE_MAX_LEN_R },
         { 0, 0, 0, 0 }
 };
 
@@ -121,6 +123,7 @@ int cmd_create(int argc, char **argv)
     int max_sub = 2;
     int max_nd = 5;
     size_t max_len = 256;
+    size_t max_len_r = 256;
 
     while (true) {
         int option = getopt_long(argc, argv, "", opt_create, NULL);
@@ -166,6 +169,10 @@ int cmd_create(int argc, char **argv)
             max_len = atol(optarg);
             df_debug("set max_len: %ld\n", max_len);
             break;
+        case OPT_CREATE_MAX_LEN_R:
+            max_len_r = atol(optarg);
+            df_debug("set max_len_r: %ld\n", max_len_r);
+            break;
         case 0:
         case '?':
         default:
@@ -176,9 +183,11 @@ int cmd_create(int argc, char **argv)
         df_error("--name must specified\n\n%s", usage_create);
         return -1;
     }
-    df_debug("name: %s; type: %d, pub: %d, sub: %d, nd: %d, len: %ld\n",
-            name, type, max_pub, max_sub, max_nd, max_len);
-    return cdipc_create(name, type, max_pub, max_sub, max_nd, max_len);
+    if (type != CDIPC_SERVICE)
+        max_len_r = 0;
+    df_debug("name: %s; type: %d, pub: %d, sub: %d, nd: %d, len: %ld, len_r: %ld\n",
+            name, type, max_pub, max_sub, max_nd, max_len, max_len_r);
+    return cdipc_create(name, type, max_pub, max_sub, max_nd, max_len, max_len_r);
 }
 
 
@@ -329,7 +338,7 @@ int cmd_put(int argc, char **argv)
         if ((r = cdipc_pub_wait(ch, nd, &abstime))) {
             return -1;
         }
-        printf("ret: %s\n", nd->dat + nd->len);
+        printf("ret: %s\n", nd->dat + hdr->max_len);
         if ((r = cdipc_pub_free(ch, nd))) {
             return -1;
         }
@@ -343,7 +352,6 @@ enum OPT_GET_IDX {
     OPT_GET_HELP = 1000,
     OPT_GET_NAME,
     OPT_GET_ID,
-    OPT_GET_RECOVER,
     OPT_GET_TIMEOUT,
     OPT_GET_RET_DAT
 };
@@ -352,7 +360,6 @@ static struct option opt_get[] = {
         { "help",       no_argument, NULL, OPT_GET_HELP },
         { "name",       required_argument, NULL, OPT_GET_NAME },
         { "id",         required_argument, NULL, OPT_GET_ID },
-        { "recover",    no_argument, NULL, OPT_GET_RECOVER },
         { "timeout",    required_argument, NULL, OPT_GET_TIMEOUT },
         { "ret-dat",    required_argument, NULL, OPT_GET_RET_DAT },
         { 0, 0, 0, 0 }
@@ -366,7 +373,6 @@ int cmd_get(int argc, char **argv)
     cdipc_nd_t *nd;
     char name[NAME_MAX] = { 0 };
     int id = 0;
-    bool recover = false;
     float timeout = 10;
     char *ret_dat = "ret msg";
 
@@ -392,10 +398,6 @@ int cmd_get(int argc, char **argv)
         case OPT_GET_ID:
             id = atol(optarg);
             df_debug("set id: %d\n", id);
-            break;
-        case OPT_GET_RECOVER:
-            recover = true;
-            printf("selecting recover\n");
             break;
         case OPT_GET_TIMEOUT:
             timeout = atof(optarg);
@@ -424,8 +426,9 @@ int cmd_get(int argc, char **argv)
     if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
         return -1;
     }
-    if (recover)
-        printf("recover: %d\n", cdipc_recover(ch));
+    if ((r = cdipc_recover(ch)) > 0) {
+        printf("recover: %d\n", r);
+    }
 
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
@@ -440,8 +443,8 @@ int cmd_get(int argc, char **argv)
             return -1;
         }
     } else {
-        strcpy(nd->dat + nd->len, ret_dat);
-        nd->ret_len = strlen(ret_dat);
+        strcpy(nd->dat + hdr->max_len, ret_dat);
+        nd->len_r = strlen(ret_dat);
 
         if ((r = cdipc_sub_ret(ch, nd))) {
             return -1;
@@ -591,9 +594,8 @@ int cmd_dump(int argc, char **argv)
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
-    cd_mutex_lock(&hdr->mutex, NULL);
-
     printf("futex: %08x, cond: %08x %08x\n", hdr->mutex, hdr->cond.c, hdr->cond.m);
+    cd_mutex_lock(&hdr->mutex, NULL);
 
     printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
             hdr->type == CDIPC_SERVICE ? "service" : "topic",
@@ -610,17 +612,12 @@ int cmd_dump(int argc, char **argv)
         }
         printf("]\n");
     }
-    {
-        cdipc_wp_t *wps = (void *)ch->subs + sizeof(cdipc_sub_t) * hdr->max_sub;
-        cdipc_nd_t *nds = (void *)wps + sizeof(cdipc_wp_t) * hdr->max_nd * hdr->max_sub;
-
-        for (i = 0; i < hdr->max_nd; i++) {
-            cdipc_nd_t *nd = (void *)nds + (sizeof(cdipc_nd_t) + hdr->max_len) * i;
-            if (!nd->sub_ref && nd->pub_id < 0)
-                continue;
-            printf("- node %d, sub_ref: %016lx, pub_id: %d (%d), len: %ld, ret_len: %ld\n",
-                    nd->id, nd->sub_ref, nd->pub_id, nd->pub_id_bk, nd->len, nd->ret_len);
-        }
+    for (i = 0; i < hdr->max_nd; i++) {
+        cdipc_nd_t *nd = (void *)ch->nds + ch->nd_len * i;
+        if (!nd->sub_ref && nd->pub_id < 0)
+            continue;
+        printf("- node %d, sub_ref: %016lx, pub_id: %d (%d), len: %ld, len_r: %ld, abort: %d\n",
+                nd->id, nd->sub_ref, nd->pub_id, nd->pub_id_bk, nd->len, nd->len_r, nd->abort);
     }
 
     for (i = 0; i < hdr->max_sub; i++) {
