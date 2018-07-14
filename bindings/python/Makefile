@@ -7,6 +7,12 @@
 # Author: Duke Fong <duke@dukelec.com>
 #
 
+ifeq ($(PY_SITE_DIR),)
+	PY_SITE_DIR := $(shell python3 -c "import site; print(site.getsitepackages()[0])")
+endif
+
+PY_INC_DIR := $(shell python3 -c "import sysconfig; print(sysconfig.get_paths()['include'])")
+
 BUILD_DIR = build
 
 INCLUDES = \
@@ -27,7 +33,7 @@ OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
 
 I_INCLUDES = $(foreach includedir,$(INCLUDES),-I$(includedir))
-CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC $(shell pkg-config --cflags python-3.6m)
+CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC -I$(PY_INC_DIR)
 LDFLAGS = -lcdipc -lpthread -lrt -shared
 
 DEPS = $(foreach includedir,$(INCLUDES),$(wildcard $(includedir)/*.h))
@@ -42,7 +48,7 @@ $(BUILD_DIR)/%.o: %.c $(DEPS) Makefile | $(BUILD_DIR)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 $(TARGET): $(OBJECTS)
-	gcc -o $@ $^ $(LDFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 $(BUILD_DIR):
 	mkdir $@
@@ -51,4 +57,8 @@ $(BUILD_DIR):
 
 clean:
 	rm -rf cdipc.py $(BUILD_DIR) $(TARGET)
+
+install:
+	install -m 644 _cdipc.so $(PY_SITE_DIR)/
+	install -m 644 cdipc.py $(PY_SITE_DIR)/
 

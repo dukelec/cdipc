@@ -7,8 +7,12 @@
 # Author: Duke Fong <duke@dukelec.com>
 #
 
+ifeq ($(PREFIX),)
+	PREFIX := /usr/local
+endif
+
 INCLUDES = \
-.. \
+../.. \
 .
 
 C_SOURCES = \
@@ -35,7 +39,7 @@ $(BUILD_DIR)/%.o: %.c $(DEPS) Makefile | $(BUILD_DIR)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 $(TARGET): $(OBJECTS)
-	gcc -o $@ $^ $(LDFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 $(BUILD_DIR):
 	mkdir $@
@@ -44,4 +48,8 @@ $(BUILD_DIR):
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
+
+install:
+	install -d $(DESTDIR)$(PREFIX)/bin/
+	install -m 755 cdipc $(DESTDIR)$(PREFIX)/bin/
 

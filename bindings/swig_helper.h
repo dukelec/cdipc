@@ -10,6 +10,11 @@ typedef struct {
 } swig_string_data_t;
 
 
+static uint8_t *buf_offset(uint8_t *base, int offset)
+{
+    return base + offset;
+}
+
 static swig_string_data_t buf_read(uint8_t *data, int size)
 {
     swig_string_data_t sdata = { 0 };

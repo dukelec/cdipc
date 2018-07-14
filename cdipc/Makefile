@@ -7,6 +7,10 @@
 # Author: Duke Fong <duke@dukelec.com>
 #
 
+ifeq ($(PREFIX),)
+	PREFIX := /usr/local
+endif
+
 INCLUDES = \
 ./utils \
 ./
@@ -37,7 +41,7 @@ $(BUILD_DIR)/%.o: %.c $(DEPS) Makefile | $(BUILD_DIR)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 $(TARGET): $(OBJECTS)
-	gcc -o $@ $^ $(LDFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
 $(BUILD_DIR):
 	mkdir $@
@@ -46,4 +50,12 @@ $(BUILD_DIR):
 
 clean:
 	rm -rf $(BUILD_DIR) $(TARGET)
+
+install:
+	install -d $(DESTDIR)$(PREFIX)/lib/
+	install -m 644 libcdipc.so $(DESTDIR)$(PREFIX)/lib/
+	install -d $(DESTDIR)$(PREFIX)/include/cdipc/
+	install -m 644 cdipc.h $(DESTDIR)$(PREFIX)/include/cdipc/
+	install -d $(DESTDIR)$(PREFIX)/include/cdipc/utils/
+	install -m 644 utils/*.h $(DESTDIR)$(PREFIX)/include/cdipc/utils/
 
