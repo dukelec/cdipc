@@ -7,8 +7,8 @@
  * Author: Duke Fong <duke@dukelec.com>
  */
 
-#ifndef __RLIST_H__
-#define __RLIST_H__
+#ifndef __CD_RLIST_H__
+#define __CD_RLIST_H__
 
 typedef struct rlist_node {
    struct rlist_node *rnext;

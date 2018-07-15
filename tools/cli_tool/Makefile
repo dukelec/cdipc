@@ -12,10 +12,13 @@ ifeq ($(PREFIX),)
 endif
 
 INCLUDES = \
-../..
+../.. \
+.
 
 C_SOURCES = \
-cdipc_tool.c
+cdipc_tool.c \
+../../cdipc/utils/cd_list.c \
+../../cdipc/utils/cd_args.c
 
 
 GIT_VERSION := $(shell git describe --dirty --always --tags)

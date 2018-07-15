@@ -12,7 +12,7 @@
 
 #include "utils/cd_utils.h"
 #include "utils/cd_debug.h"
-#include "utils/rlist.h"
+#include "utils/cd_rlist.h"
 #include "utils/cd_time.h"
 #include "utils/cd_futex.h"
 

@@ -15,7 +15,7 @@ INCLUDES =
 
 C_SOURCES = \
 ./cdipc.c \
-./utils/rlist.c \
+./utils/cd_rlist.c \
 ./utils/cd_futex.c
 
 

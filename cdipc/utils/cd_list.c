@@ -8,7 +8,7 @@
  */
 
 #include "cd_utils.h"
-#include "list.h"
+#include "cd_list.h"
 
 #ifdef LIST_DEBUG
 #include <unwind.h>

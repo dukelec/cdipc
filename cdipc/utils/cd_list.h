@@ -7,8 +7,8 @@
  * Author: Duke Fong <duke@dukelec.com>
  */
 
-#ifndef __LIST_H__
-#define __LIST_H__
+#ifndef __CD_LIST_H__
+#define __CD_LIST_H__
 
 typedef struct list_node {
    struct list_node *next;

@@ -8,7 +8,7 @@
  */
 
 #include "cd_utils.h"
-#include "rlist.h"
+#include "cd_rlist.h"
 
 // pick first item
 rlist_node_t *rlist_get(const void *base, rlist_head_t *head)

@@ -15,6 +15,8 @@
 #include <assert.h>
 
 #include <cdipc/cdipc.h>
+#include <cdipc/utils/cd_list.h>
+#include <cdipc/utils/cd_args.h>
 
 const char *usage_main = \
     "Usage: cdipc [create|unlink|put|get|pend-cfg|dump] ...\n"
@@ -89,169 +91,68 @@ const char *usage_dump = \
     "  --name NAME      # topic or service name\n";
 
 
-enum OPT_CREATE_IDX {
-    OPT_CREATE_HELP = 1000,
-    OPT_CREATE_NAME,
-    OPT_CREATE_TYPE,
-    OPT_CREATE_MAX_PUB,
-    OPT_CREATE_MAX_SUB,
-    OPT_CREATE_MAX_ND,
-    OPT_CREATE_MAX_LEN,
-    OPT_CREATE_MAX_LEN_R
-};
-
-static struct option opt_create[] = {
-        { "help",       no_argument, NULL, OPT_CREATE_HELP },
-        { "name",       required_argument, NULL, OPT_CREATE_NAME },
-        { "type",       required_argument, NULL, OPT_CREATE_TYPE },
-        { "max-pub",    required_argument, NULL, OPT_CREATE_MAX_PUB },
-        { "max-sub",    required_argument, NULL, OPT_CREATE_MAX_SUB },
-        { "max-nd",     required_argument, NULL, OPT_CREATE_MAX_ND },
-        { "max-len",    required_argument, NULL, OPT_CREATE_MAX_LEN },
-        { "max-len-r",  required_argument, NULL, OPT_CREATE_MAX_LEN_R },
-        { 0, 0, 0, 0 }
-};
-
 int cmd_create(int argc, char **argv)
 {
-    char name[NAME_MAX] = { 0 };
-    cdipc_type_t type = CDIPC_TOPIC;
-    int max_pub = 2;
-    int max_sub = 2;
-    int max_nd = 5;
-    size_t max_len = 256;
-    size_t max_len_r = 256;
+    cd_args_t ca;
+    cd_args_parse(&ca, argc, argv);
 
-    while (true) {
-        int option = getopt_long(argc, argv, "", opt_create, NULL);
-        if (option == -1) {
-            if (optind < argc) {
-                printf ("non-option argv-elements: ");
-                while (optind < argc)
-                    printf ("%s ", argv[optind++]);
-                putchar ('\n');
-            }
-            break;
-        }
-        switch (option) {
-        case OPT_CREATE_HELP:
-            printf("%s", usage_create);
-            exit(0);
-        case OPT_CREATE_NAME:
-            strncpy(name, optarg, NAME_MAX);
-            df_debug("set name: %s\n", name);
-            break;
-        case OPT_CREATE_TYPE:
-            if (0 == strcasecmp(optarg, "service")) {
-                type = CDIPC_SERVICE;
-                df_debug("set type: service\n");
-            } else if (0 != strcasecmp(optarg, "topic")) {
-                df_error("wrong type, must be topic or service\n");
-                exit(-1);
-            }
-            break;
-        case OPT_CREATE_MAX_PUB:
-            max_pub = atol(optarg);
-            df_debug("set max_pub: %d\n", max_pub);
-            break;
-        case OPT_CREATE_MAX_SUB:
-            max_sub = atol(optarg);
-            df_debug("set max_sub: %d\n", max_sub);
-            break;
-        case OPT_CREATE_MAX_ND:
-            max_nd = atol(optarg);
-            df_debug("set max_nd: %d\n", max_nd);
-            break;
-        case OPT_CREATE_MAX_LEN:
-            max_len = atol(optarg);
-            df_debug("set max_len: %ld\n", max_len);
-            break;
-        case OPT_CREATE_MAX_LEN_R:
-            max_len_r = atol(optarg);
-            df_debug("set max_len_r: %ld\n", max_len_r);
-            break;
-        case 0:
-        case '?':
-        default:
-            break;
-        }
+    const char *name = cd_arg_get_def(&ca, "--name", "");
+    cdipc_type_t type = !strcasecmp(cd_arg_get_def(&ca, "--type", "topic"), "service") ? \
+            CDIPC_SERVICE : CDIPC_TOPIC;
+    int max_pub = atol(cd_arg_get_def(&ca, "--max-pub", "2"));
+    int max_sub = atol(cd_arg_get_def(&ca, "--max-sub", "2"));
+    int max_nd = atol(cd_arg_get_def(&ca, "--max-nd", "5"));
+    size_t max_len = atol(cd_arg_get_def(&ca, "--max-len", "256"));
+    size_t max_len_r = atol(cd_arg_get_def(&ca, "--max-len-r", "256"));
+
+    if (cd_arg_get2(&ca, "--help", "-h")) {
+        printf("%s", usage_dump);
+        exit(0);
+    }
+    const char *left = cd_arg_get_left(&ca);
+    if (left) {
+        df_error("unknown arg: %s\n", left);
+        printf("%s", usage_dump);
+        exit(-1);
     }
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_create);
         return -1;
     }
+
     if (type != CDIPC_SERVICE)
         max_len_r = 0;
-    df_debug("name: %s; type: %d, pub: %d, sub: %d, nd: %d, len: %ld, len_r: %ld\n",
+    df_info("name: %s; type: %d, pub: %d, sub: %d, nd: %d, len: %ld, len_r: %ld\n",
             name, type, max_pub, max_sub, max_nd, max_len, max_len_r);
     return cdipc_create(name, type, max_pub, max_sub, max_nd, max_len, max_len_r);
 }
 
 
-enum OPT_UNLINK_IDX {
-    OPT_UNLINK_HELP = 1000,
-    OPT_UNLINK_NAME
-};
-
-static struct option opt_unlink[] = {
-        { "help",       no_argument, NULL, OPT_UNLINK_HELP },
-        { "name",       required_argument, NULL, OPT_UNLINK_NAME },
-        { 0, 0, 0, 0 }
-};
-
 int cmd_unlink(int argc, char **argv)
 {
-    char name[NAME_MAX] = { 0 };
+    cd_args_t ca;
+    cd_args_parse(&ca, argc, argv);
 
-    while (true) {
-        int option = getopt_long(argc, argv, "", opt_unlink, NULL);
-        if (option == -1) {
-            if (optind < argc) {
-                printf ("non-option argv-elements: ");
-                while (optind < argc)
-                    printf ("%s ", argv[optind++]);
-                putchar ('\n');
-            }
-            break;
-        }
-        switch (option) {
-        case OPT_UNLINK_HELP:
-            printf("%s", usage_unlink);
-            exit(0);
-        case OPT_UNLINK_NAME:
-            strncpy(name, optarg, NAME_MAX);
-            df_debug("set name: %s\n", name);
-            break;
-        case 0:
-        case '?':
-        default:
-            break;
-        }
+    const char *name = cd_arg_get_def(&ca, "--name", "");
+
+    if (cd_arg_get2(&ca, "--help", "-h")) {
+        printf("%s", usage_dump);
+        exit(0);
+    }
+    const char *left = cd_arg_get_left(&ca);
+    if (left) {
+        df_error("unknown arg: %s\n", left);
+        printf("%s", usage_dump);
+        exit(-1);
     }
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_unlink);
         return -1;
     }
+
     return cdipc_unlink(name);
 }
 
-
-enum OPT_PUT_IDX {
-    OPT_PUT_HELP = 1000,
-    OPT_PUT_NAME,
-    OPT_PUT_ID,
-    OPT_PUT_TIMEOUT,
-    OPT_PUT_DAT
-};
-
-static struct option opt_put[] = {
-        { "help",       no_argument, NULL, OPT_PUT_HELP },
-        { "name",       required_argument, NULL, OPT_PUT_NAME },
-        { "id",         required_argument, NULL, OPT_PUT_ID },
-        { "timeout",    required_argument, NULL, OPT_PUT_TIMEOUT },
-        { "dat",        required_argument, NULL, OPT_PUT_DAT },
-        { 0, 0, 0, 0 }
-};
 
 int cmd_put(int argc, char **argv)
 {
@@ -259,47 +160,24 @@ int cmd_put(int argc, char **argv)
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
     cdipc_nd_t *nd;
-    char name[NAME_MAX] = { 0 };
-    int id = 0;
-    float timeout = 10;
-    char *dat = "test msg";
 
-    while (true) {
-        int option = getopt_long(argc, argv, "", opt_put, NULL);
-        if (option == -1) {
-            if (optind < argc) {
-                printf ("non-option argv-elements: ");
-                while (optind < argc)
-                    printf ("%s ", argv[optind++]);
-                putchar ('\n');
-            }
-            break;
-        }
-        switch (option) {
-        case OPT_PUT_HELP:
-            printf("%s", usage_put);
-            exit(0);
-        case OPT_PUT_NAME:
-            strncpy(name, optarg, NAME_MAX);
-            df_debug("set name: %s\n", name);
-            break;
-        case OPT_PUT_ID:
-            id = atol(optarg);
-            df_debug("set id: %d\n", id);
-            break;
-        case OPT_PUT_TIMEOUT:
-            timeout = atof(optarg);
-            df_debug("set timeout: %f\n", timeout);
-            break;
-        case OPT_PUT_DAT:
-            dat = strdup(optarg);
-            df_debug("set dat: %s\n", dat);
-            break;
-        case 0:
-        case '?':
-        default:
-            break;
-        }
+    cd_args_t ca;
+    cd_args_parse(&ca, argc, argv);
+
+    const char *name = cd_arg_get_def(&ca, "--name", "");
+    int id = atol(cd_arg_get_def(&ca, "--id", "0"));
+    float timeout = atof(cd_arg_get_def(&ca, "--timeout", "10"));
+    const char *dat = cd_arg_get_def(&ca, "--dat", "test msg");
+
+    if (cd_arg_get2(&ca, "--help", "-h")) {
+        printf("%s", usage_dump);
+        exit(0);
+    }
+    const char *left = cd_arg_get_left(&ca);
+    if (left) {
+        df_error("unknown arg: %s\n", left);
+        printf("%s", usage_dump);
+        exit(-1);
     }
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_put);
@@ -345,70 +223,30 @@ int cmd_put(int argc, char **argv)
 }
 
 
-enum OPT_GET_IDX {
-    OPT_GET_HELP = 1000,
-    OPT_GET_NAME,
-    OPT_GET_ID,
-    OPT_GET_TIMEOUT,
-    OPT_GET_RET_DAT
-};
-
-static struct option opt_get[] = {
-        { "help",       no_argument, NULL, OPT_GET_HELP },
-        { "name",       required_argument, NULL, OPT_GET_NAME },
-        { "id",         required_argument, NULL, OPT_GET_ID },
-        { "timeout",    required_argument, NULL, OPT_GET_TIMEOUT },
-        { "ret-dat",    required_argument, NULL, OPT_GET_RET_DAT },
-        { 0, 0, 0, 0 }
-};
-
 int cmd_get(int argc, char **argv)
 {
     int r = 0;
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
     cdipc_nd_t *nd;
-    char name[NAME_MAX] = { 0 };
-    int id = 0;
-    float timeout = 10;
-    char *ret_dat = "ret msg";
 
-    while (true) {
-        int option = getopt_long(argc, argv, "", opt_get, NULL);
-        if (option == -1) {
-            if (optind < argc) {
-                printf ("non-option argv-elements: ");
-                while (optind < argc)
-                    printf ("%s ", argv[optind++]);
-                putchar ('\n');
-            }
-            break;
-        }
-        switch (option) {
-        case OPT_GET_HELP:
-            printf("%s", usage_get);
-            exit(0);
-        case OPT_GET_NAME:
-            strncpy(name, optarg, NAME_MAX);
-            df_debug("set name: %s\n", name);
-            break;
-        case OPT_GET_ID:
-            id = atol(optarg);
-            df_debug("set id: %d\n", id);
-            break;
-        case OPT_GET_TIMEOUT:
-            timeout = atof(optarg);
-            df_debug("set timeout: %f\n", timeout);
-            break;
-        case OPT_GET_RET_DAT:
-            ret_dat = strdup(optarg);
-            df_debug("set ret_dat: %s\n", ret_dat);
-            break;
-        case 0:
-        case '?':
-        default:
-            break;
-        }
+    cd_args_t ca;
+    cd_args_parse(&ca, argc, argv);
+
+    const char *name = cd_arg_get_def(&ca, "--name", "");
+    int id = atol(cd_arg_get_def(&ca, "--id", "0"));
+    float timeout = atof(cd_arg_get_def(&ca, "--timeout", "10"));
+    const char *ret_dat = cd_arg_get_def(&ca, "--ret-dat", "ret msg");
+
+    if (cd_arg_get2(&ca, "--help", "-h")) {
+        printf("%s", usage_dump);
+        exit(0);
+    }
+    const char *left = cd_arg_get_left(&ca);
+    if (left) {
+        df_error("unknown arg: %s\n", left);
+        printf("%s", usage_dump);
+        exit(-1);
     }
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_get);
@@ -452,78 +290,37 @@ int cmd_get(int argc, char **argv)
 }
 
 
-enum OPT_PEND_CFG_IDX {
-    OPT_PEND_CFG_HELP = 1000,
-    OPT_PEND_CFG_NAME,
-    OPT_PEND_CFG_ID,
-    OPT_PEND_CFG_WAIT,
-    OPT_PEND_CFG_MAX
-};
-
-static struct option opt_pend_cfg[] = {
-        { "help",       no_argument, NULL, OPT_PEND_CFG_HELP },
-        { "name",       required_argument, NULL, OPT_PEND_CFG_NAME },
-        { "id",         required_argument, NULL, OPT_PEND_CFG_ID },
-        { "wait",       required_argument, NULL, OPT_PEND_CFG_WAIT },
-        { "max",        required_argument, NULL, OPT_PEND_CFG_MAX },
-        { 0, 0, 0, 0 }
-};
-
 int cmd_pend_cfg(int argc, char **argv)
 {
     int r = 0;
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
-    char name[NAME_MAX] = { 0 };
-    int id = 0;
-    bool need_wait = false;
-    int pend_max = 2;
 
-    while (true) {
-        int option = getopt_long(argc, argv, "", opt_pend_cfg, NULL);
-        if (option == -1) {
-            if (optind < argc) {
-                printf ("non-option argv-elements: ");
-                while (optind < argc)
-                    printf ("%s ", argv[optind++]);
-                putchar ('\n');
-            }
-            break;
-        }
-        switch (option) {
-        case OPT_PEND_CFG_HELP:
-            printf("%s", usage_pend_cfg);
-            exit(0);
-        case OPT_PEND_CFG_NAME:
-            strncpy(name, optarg, NAME_MAX);
-            df_debug("set name: %s\n", name);
-            break;
-        case OPT_PEND_CFG_ID:
-            id = atol(optarg);
-            df_debug("set id: %d\n", id);
-            break;
-        case OPT_PEND_CFG_WAIT:
-            if (0 == strcasecmp(optarg, "true")) {
-                need_wait = true;
-                df_debug("set need_wait: true\n");
-            } else {
-                df_debug("keep need_wait: false\n");
-            }
-            break;
-        case OPT_PEND_CFG_MAX:
-            pend_max = atol(optarg);
-            df_debug("set pend_max: %d\n", pend_max);
-            break;
-        case 0:
-        case '?':
-        default:
-            break;
-        }
+    cd_args_t ca;
+    cd_args_parse(&ca, argc, argv);
+
+    int id = atol(cd_arg_get_def(&ca, "--id", "0"));
+    int pend_max = atol(cd_arg_get_def(&ca, "--max", "2"));
+    const char *name = cd_arg_get_def(&ca, "--name", "");
+    bool need_wait = !strcasecmp(cd_arg_get_def(&ca, "--wait", "false"), "true");
+
+    if (cd_arg_get2(&ca, "--help", "-h")) {
+        printf("%s", usage_dump);
+        exit(0);
+    }
+    const char *left = cd_arg_get_left(&ca);
+    if (left) {
+        df_error("unknown arg: %s\n", left);
+        printf("%s", usage_dump);
+        exit(-1);
     }
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_pend_cfg);
         return -1;
     }
+
+    printf("set %s ch%d: need_wait: %d, pend_max: %d\n",
+            name, id, need_wait, pend_max);
 
     if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
         return -1;
@@ -538,51 +335,29 @@ int cmd_pend_cfg(int argc, char **argv)
 }
 
 
-enum OPT_DUMP_IDX {
-    OPT_DUMP_HELP = 1000,
-    OPT_DUMP_NAME
-};
-
-static struct option opt_dump[] = {
-        { "help",       no_argument, NULL, OPT_DUMP_HELP },
-        { "name",       required_argument, NULL, OPT_DUMP_NAME },
-        { 0, 0, 0, 0 }
-};
-
 int cmd_dump(int argc, char **argv)
 {
     int i, r = 0;
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
-    char name[NAME_MAX] = { 0 };
     int tid = syscall(SYS_gettid);
 
-    while (true) {
-        int option = getopt_long(argc, argv, "", opt_dump, NULL);
-        if (option == -1) {
-            if (optind < argc) {
-                printf ("non-option argv-elements: ");
-                while (optind < argc)
-                    printf ("%s ", argv[optind++]);
-                putchar ('\n');
-            }
-            break;
-        }
-        switch (option) {
-        case OPT_DUMP_HELP:
-            printf("%s", usage_dump);
-            exit(0);
-        case OPT_DUMP_NAME:
-            strncpy(name, optarg, NAME_MAX);
-            df_debug("set name: %s\n", name);
-            break;
-        case 0:
-        case '?':
-        default:
-            break;
-        }
+    cd_args_t ca;
+    cd_args_parse(&ca, argc, argv);
+
+    const char *name = cd_arg_get_def(&ca, "--name", "");
+
+    if (cd_arg_get2(&ca, "--help", "-h")) {
+        printf("%s", usage_dump);
+        exit(0);
     }
-    if (!strlen(name)) {
+    const char *left = cd_arg_get_left(&ca);
+    if (left) {
+        df_error("unknown arg: %s\n", left);
+        printf("%s", usage_dump);
+        exit(-1);
+    }
+    if (!name || !strlen(name)) {
         df_error("--name must specified\n\n%s", usage_dump);
         return -1;
     }
@@ -663,4 +438,3 @@ int main(int argc, char **argv)
     printf("%s", usage_main);
     return -1;
 }
-
