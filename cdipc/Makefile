@@ -11,9 +11,7 @@ ifeq ($(PREFIX),)
 	PREFIX := /usr/local
 endif
 
-INCLUDES = \
-./utils \
-./
+INCLUDES =
 
 C_SOURCES = \
 ./cdipc.c \

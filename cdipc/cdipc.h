@@ -10,6 +10,12 @@
 #ifndef __CDIPC_H__
 #define __CDIPC_H__
 
+#include "utils/cd_utils.h"
+#include "utils/cd_debug.h"
+#include "utils/rlist.h"
+#include "utils/cd_time.h"
+#include "utils/cd_futex.h"
+
 #define CDIPC_MAGIC_NUM 0xcdcd0001
 
 

@@ -12,8 +12,7 @@ ifeq ($(PREFIX),)
 endif
 
 INCLUDES = \
-../.. \
-.
+../..
 
 C_SOURCES = \
 cdipc_tool.c

@@ -12,7 +12,7 @@ CDIPC is similar to the ACH IPC library, but eliminates memory copy to improve e
 
 ### Channel Data Structure
 
-Data is shared between processes through mmap.
+Data is shared between processes through shared memory.
 
 The data structure is same for Topic and Service, the gray part is service only.
 
@@ -23,7 +23,7 @@ The max data size of each node in each channel are the same.
 
 <img src="docs/img/cdipc-data-structure.svg" style="max-width:100%">
 
-Currently we use a single conditional variable instead of all semaphores for simplification.
+Currently we use a single conditional variable instead of semaphores for simplification.
 
 
 ### Core Procedures
@@ -51,9 +51,10 @@ For use as service, only one replier is allowed.
 
 ### Other Consideration
 
- - We could implement the channel data structure inside a centra server application (instead of shared memory), for cross platform purpose.
- - We could use different daemon application to export Topic and Service channel to different interface protocol, e.g. websocket, TCP/UDP socket, unix socket.
  - We could traversal all nodes to recover lost nodes depend on pub and sub reference, e.g. process exist on error.
+ - Because we use PI-futex instead of pthread mutex, so communication between user and kernel space is possible.
+ - We could use different daemon application to export Topic and Service channel to different interface protocol, e.g. websocket (already support), TCP/UDP socket, unix socket.
+
 
 #### Logging
 
@@ -62,7 +63,31 @@ We can simply add one or more subscriber to each topic and service dedicated for
 Note: The log subscriber in service nerver replier to requester.
 
 
-## License
+### Install
+
+`make && sudo make install`
+
+
+### Example
+
+There is a command line tool for test purpose, type `cdipc --help` for more details,
+or read the help message at the beginning of `tools/cli_tool/cdipc_tool.c`.
+
+```
+Example for topic (run put command in another terminal):
+  cdipc create --name test   # create a topic with 2 pub and 2 sub
+                             # 5 nodes of 256 bytes by default
+  cdipc pend-cfg --name test # change max_len to 2 for first sub
+                             # max_len is 0 and need_wait is false after create
+  cdipc get --name test      # wait on sub id 0
+  cdipc put --name test      # publish string "test msg" to the topic
+
+Notes:
+  default values can override by arguments
+...
+```
+
+### License
 
 The MIT License (MIT)  
 https://rem.mit-license.org

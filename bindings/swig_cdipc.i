@@ -1,11 +1,7 @@
 %module cdipc
 %{
-    #include <cdipc/utils/cd_time.h>
-    #include <cdipc/utils/cd_utils.h>
-    #include <cdipc/utils/cd_futex.h>
-    #include <cdipc/utils/rlist.h>
     #include <cdipc/cdipc.h>
-    #include "../swig_helper.h"
+    #include "../../swig_helper.h"
 %}
 
 
@@ -31,5 +27,5 @@
     //free($1.data);
 }
 
-%include "./swig_helper.h"
+%include "swig_helper.h"
 

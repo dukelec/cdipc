@@ -16,8 +16,7 @@ PY_INC_DIR := $(shell python3 -c "import sysconfig; print(sysconfig.get_paths()[
 BUILD_DIR = build
 
 INCLUDES = \
-../.. \
-.
+../..
 
 C_SOURCES = \
 $(BUILD_DIR)/swig_cdipc_wrap.c

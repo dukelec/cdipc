@@ -14,11 +14,6 @@
 #include <fcntl.h>
 #include <assert.h>
 
-#include <cdipc/utils/cd_utils.h>
-#include <cdipc/utils/cd_debug.h>
-#include <cdipc/utils/rlist.h>
-#include <cdipc/utils/cd_time.h>
-#include <cdipc/utils/cd_futex.h>
 #include <cdipc/cdipc.h>
 
 const char *usage_main = \
@@ -30,7 +25,7 @@ const char *usage_main = \
     "  pend-cfg: set max_len and need_wait flag for a subscriber\n"
     "  dump:     dump topic or service information for debug\n"
     "\n"
-    "Example for topic:\n"
+    "Example for topic: (run put command in another terminal)\n"
     "  cdipc create --name test   # create a topic with 2 pub and 2 sub\n"
     "                             # 5 nodes of 256 bytes by default\n"
     "  cdipc pend-cfg --name test # change max_len to 2 for first sub\n"
@@ -44,8 +39,9 @@ const char *usage_main = \
     "  cdipc get --name test      # reply \"ret msg\" when whatever received\n"
     "  cdipc put --name test      # send requst and wait for reply\n"
     "\n"
-    "You can override default values by specify them through arguments,\n"
-    "type cdipc CMD --help for details\n";
+    "Notes:\n"
+    "  default values can override by arguments,\n"
+    "  type \"cdipc CMD --help\" for details\n";
 
 const char *usage_create = \
     "Arguments for create:\n"

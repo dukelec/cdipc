@@ -11,12 +11,8 @@
 #include <sys/syscall.h>
 #include <fcntl.h>
 #include <assert.h>
-
-#include "cd_utils.h"
-#include "cd_debug.h"
-#include "rlist.h"
-#include "cd_futex.h"
 #include "cdipc.h"
+
 
 static void cdipc_cal_addr(cdipc_ch_t *ch, bool update_hdr)
 {
@@ -488,8 +484,6 @@ int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)
         if (!nd->sub_ref && nd->pub_id < 0)
             rlist_put(hdr, &hdr->free, &nd->node);
     }
-
-    // TODO: set nd status
 
     cd_cond_broadcast(&hdr->cond);
     cd_mutex_unlock(&hdr->mutex, sub->tid);
