@@ -218,6 +218,7 @@ int cmd_put(int argc, char **argv)
         }
     }
 
+    cdipc_close(ch);
     return 0;
 }
 
@@ -285,6 +286,7 @@ int cmd_get(int argc, char **argv)
         }
     }
 
+    cdipc_close(ch);
     return 0;
 }
 
@@ -330,6 +332,7 @@ int cmd_pend_cfg(int argc, char **argv)
 
     sub->need_wait = need_wait;
     sub->max_len = pend_max;
+    cdipc_close(ch);
     return 0;
 }
 
@@ -361,12 +364,13 @@ int cmd_dump(int argc, char **argv)
         return -1;
     }
 
-    if ((r = cdipc_open(ch, name, 0, 0))) {
+    if ((r = cdipc_open(ch, name, -1, -1))) {
         return -1;
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
-    printf("futex: %08x, cond: %08x %08x\n", hdr->mutex, hdr->cond.c, hdr->cond.m);
+    printf("our tid: %08x, futex: %08x, cond: %08x %08x\n",
+            tid, hdr->mutex, hdr->cond.c, hdr->cond.m);
     cd_mutex_lock(&hdr->mutex, tid, NULL);
 
     printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
@@ -392,11 +396,16 @@ int cmd_dump(int argc, char **argv)
                 nd->id, nd->sub_ref, nd->pub_id, nd->pub_id_bk, nd->len, nd->len_r, nd->abort);
     }
 
+    for (i = 0; i < hdr->max_pub; i++) {
+        cdipc_pub_t *pub = ch->pubs + i;
+        printf("pub %d: tid: %08x\n", pub->id, pub->tid);
+    }
+
     for (i = 0; i < hdr->max_sub; i++) {
         rlist_node_t *rnode, *node;
         cdipc_sub_t *sub = ch->subs + i;
-        printf("sub %d: pend: %d, need_wait: %d, max_len: %d: [",
-                sub->id, sub->pend_head.len, sub->need_wait, sub->max_len);
+        printf("sub %d: tid: %08x, pend: %d, need_wait: %d, max_len: %d: [",
+                sub->id, sub->tid, sub->pend_head.len, sub->need_wait, sub->max_len);
         for (rnode = sub->pend_head.rfirst; rnode != NULL; rnode = node->rnext) {
             node = (void *)rnode + (ptrdiff_t)hdr;
             cdipc_wp_t *wp = rlist_entry(node, cdipc_wp_t);

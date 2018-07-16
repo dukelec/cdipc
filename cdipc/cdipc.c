@@ -136,6 +136,18 @@ int cdipc_unlink(const char *name)
 }
 
 
+// normally: -1 for auto detect, 0 for reset to zero
+void cdipc_set_tid(cdipc_ch_t *ch, int tid)
+{
+    if (tid == -1)
+        tid = syscall(SYS_gettid);
+
+    if (ch->role == CDIPC_PUB && ch->pub)
+        ch->pub->tid = tid;
+    else if (ch->role == CDIPC_SUB && ch->sub)
+        ch->sub->tid = tid;
+}
+
 int cdipc_open(cdipc_ch_t *ch, const char *name,
         cdipc_role_t role, int id)
 {
@@ -178,13 +190,14 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
     ch->role = role;
     if (role == CDIPC_PUB) {
         ch->pub = ch->pubs + id;
-        ch->pub->tid = syscall(SYS_gettid);
+        cdipc_set_tid(ch, -1);
     } else if (role == CDIPC_SUB) {
         ch->sub = ch->subs + id;
-        ch->sub->tid = syscall(SYS_gettid);
+        cdipc_set_tid(ch, -1);
     } else {
-        return -1;
+        dnf_debug(ch->name, "neither sub nor pub\n");
     }
+
     return 0;
 }
 
@@ -247,10 +260,7 @@ int cdipc_recover(cdipc_ch_t *ch)
 
 int cdipc_close(cdipc_ch_t *ch)
 {
-    if (ch->role == CDIPC_PUB && ch->pub)
-        ch->pub->tid = 0;
-    else if (ch->role == CDIPC_SUB && ch->sub)
-        ch->sub->tid = 0;
+    cdipc_set_tid(ch, 0);
 
     if (munmap(ch->hdr, ch->map_len)) {
         dnf_error(ch->name, "munmap\n");
