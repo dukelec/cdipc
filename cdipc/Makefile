@@ -51,9 +51,11 @@ clean:
 
 install:
 	install -d $(DESTDIR)$(PREFIX)/lib/
-	install -m 644 libcdipc.so $(DESTDIR)$(PREFIX)/lib/
-	install -d $(DESTDIR)$(PREFIX)/include/cdipc/
-	install -m 644 cdipc.h $(DESTDIR)$(PREFIX)/include/cdipc/
 	install -d $(DESTDIR)$(PREFIX)/include/cdipc/utils/
+	install -d $(DESTDIR)$(PREFIX)/share/cdipc/utils
+	install -m 644 libcdipc.so $(DESTDIR)$(PREFIX)/lib/
+	install -m 644 cdipc.h $(DESTDIR)$(PREFIX)/include/cdipc/
 	install -m 644 utils/*.h $(DESTDIR)$(PREFIX)/include/cdipc/utils/
+	install -m 644 cdipc.h cdipc.c $(DESTDIR)$(PREFIX)/share/cdipc/
+	install -m 644 utils/* $(DESTDIR)$(PREFIX)/share/cdipc/utils
 

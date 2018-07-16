@@ -7,14 +7,12 @@
  * Author: Duke Fong <duke@dukelec.com>
  */
 
-#include "cd_utils.h"
-#include "cd_list.h"
 #include "cd_args.h"
 
 
 int cd_args_parse(cd_args_t *ca, int argc, char **argv)
 {
-    int i, r = 0;
+    int i;
     cd_args_entry_t *pre = NULL;
     list_head_init(&ca->head);
 
@@ -30,11 +28,15 @@ int cd_args_parse(cd_args_t *ca, int argc, char **argv)
                 pre->val = argv[i];
                 pre = NULL;
             } else {
-                r = -1;
+                // save unwanted arg, report to user through cd_arg_get_left
+                cd_args_entry_t *cur = calloc(1, sizeof(cd_args_entry_t));
+                cur->key = argv[i];
+                cur->val = "\0";
+                list_put(&ca->head, &cur->node);
             }
         }
     }
-    return r;
+    return 0;
 }
 
 int cd_args_free(cd_args_t *ca)

@@ -15,7 +15,6 @@
 #include <assert.h>
 
 #include <cdipc/cdipc.h>
-#include <cdipc/utils/cd_list.h>
 #include <cdipc/utils/cd_args.h>
 
 const char *usage_main = \
@@ -106,13 +105,13 @@ int cmd_create(int argc, char **argv)
     size_t max_len_r = atol(cd_arg_get_def(&ca, "--max-len-r", "256"));
 
     if (cd_arg_get2(&ca, "--help", "-h")) {
-        printf("%s", usage_dump);
+        printf("%s", usage_create);
         exit(0);
     }
     const char *left = cd_arg_get_left(&ca);
     if (left) {
         df_error("unknown arg: %s\n", left);
-        printf("%s", usage_dump);
+        printf("%s", usage_create);
         exit(-1);
     }
     if (!strlen(name)) {
@@ -136,13 +135,13 @@ int cmd_unlink(int argc, char **argv)
     const char *name = cd_arg_get_def(&ca, "--name", "");
 
     if (cd_arg_get2(&ca, "--help", "-h")) {
-        printf("%s", usage_dump);
+        printf("%s", usage_unlink);
         exit(0);
     }
     const char *left = cd_arg_get_left(&ca);
     if (left) {
         df_error("unknown arg: %s\n", left);
-        printf("%s", usage_dump);
+        printf("%s", usage_unlink);
         exit(-1);
     }
     if (!strlen(name)) {
@@ -170,13 +169,13 @@ int cmd_put(int argc, char **argv)
     const char *dat = cd_arg_get_def(&ca, "--dat", "test msg");
 
     if (cd_arg_get2(&ca, "--help", "-h")) {
-        printf("%s", usage_dump);
+        printf("%s", usage_put);
         exit(0);
     }
     const char *left = cd_arg_get_left(&ca);
     if (left) {
         df_error("unknown arg: %s\n", left);
-        printf("%s", usage_dump);
+        printf("%s", usage_put);
         exit(-1);
     }
     if (!strlen(name)) {
@@ -239,13 +238,13 @@ int cmd_get(int argc, char **argv)
     const char *ret_dat = cd_arg_get_def(&ca, "--ret-dat", "ret msg");
 
     if (cd_arg_get2(&ca, "--help", "-h")) {
-        printf("%s", usage_dump);
+        printf("%s", usage_get);
         exit(0);
     }
     const char *left = cd_arg_get_left(&ca);
     if (left) {
         df_error("unknown arg: %s\n", left);
-        printf("%s", usage_dump);
+        printf("%s", usage_get);
         exit(-1);
     }
     if (!strlen(name)) {
@@ -305,13 +304,13 @@ int cmd_pend_cfg(int argc, char **argv)
     bool need_wait = !strcasecmp(cd_arg_get_def(&ca, "--wait", "false"), "true");
 
     if (cd_arg_get2(&ca, "--help", "-h")) {
-        printf("%s", usage_dump);
+        printf("%s", usage_pend_cfg);
         exit(0);
     }
     const char *left = cd_arg_get_left(&ca);
     if (left) {
         df_error("unknown arg: %s\n", left);
-        printf("%s", usage_dump);
+        printf("%s", usage_pend_cfg);
         exit(-1);
     }
     if (!strlen(name)) {

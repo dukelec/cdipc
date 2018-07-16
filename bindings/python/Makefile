@@ -60,4 +60,5 @@ clean:
 install:
 	install -m 644 _cdipc.so $(PY_SITE_DIR)/
 	install -m 644 cdipc.py $(PY_SITE_DIR)/
+	install -m 644 cd_args.py $(PY_SITE_DIR)/
 
