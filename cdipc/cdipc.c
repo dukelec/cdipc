@@ -173,6 +173,7 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
         dnf_error(ch->name, "re-mmap\n");
         return -1;
     }
+    cdipc_cal_addr(ch, false); // update pointers after re-mmap
 
     ch->role = role;
     if (role == CDIPC_PUB) {
