@@ -21,7 +21,10 @@
 #include "cd_debug.h"
 #include "cd_futex.h"
 
+static __thread int _tid = 0;
+
 #define b_cmpxchg(P, O, N)  __sync_bool_compare_and_swap((P), (O), (N))
+
 
 static int sys_futex(void *addr1, int op, int val1,
         const struct timespec *timeout, void *addr2, int val3)
@@ -39,9 +42,11 @@ int cd_mutex_init(cd_mutex_t *m, void *_a)
     return 0;
 }
 
-int cd_mutex_lock(cd_mutex_t *m, int tid, const struct timespec *abstime)
+int cd_mutex_lock(cd_mutex_t *m, const struct timespec *abstime)
 {
-    if (tid != 0 && b_cmpxchg(m, 0, tid))
+    if (!_tid)
+        _tid = syscall(SYS_gettid);
+    if (b_cmpxchg(m, 0, _tid))
         return 0;
 
     // absolute timeout, measured against the CLOCK_REALTIME
@@ -51,18 +56,22 @@ int cd_mutex_lock(cd_mutex_t *m, int tid, const struct timespec *abstime)
     return sys_futex(m, FUTEX_LOCK_PI, 0, abstime, NULL, 0);
 }
 
-int cd_mutex_unlock(cd_mutex_t *m, int tid)
+int cd_mutex_unlock(cd_mutex_t *m)
 {
-    if (tid != 0 && b_cmpxchg(m, tid, 0))
+    if (!_tid)
+        _tid = syscall(SYS_gettid);
+    if (b_cmpxchg(m, _tid, 0))
         return 0;
 
     // all 0 and NULL are ignored
     return sys_futex(m, FUTEX_UNLOCK_PI, 0, NULL, NULL, 0);
 }
 
-int cd_mutex_trylock(cd_mutex_t *m, int tid)
+int cd_mutex_trylock(cd_mutex_t *m)
 {
-    if (tid != 0 && b_cmpxchg(m, 0, tid))
+    if (!_tid)
+        _tid = syscall(SYS_gettid);
+    if (b_cmpxchg(m, 0, _tid))
         return 0;
 
     // all 0 and NULL are ignored
@@ -96,27 +105,26 @@ int cd_cond_broadcast(cd_cond_t *c)
     return r;
 }
 
-int cd_cond_wait(cd_cond_t *c, cd_mutex_t *m, int tid,
-        const struct timespec *abstime)
+int cd_cond_wait(cd_cond_t *c, cd_mutex_t *m, const struct timespec *abstime)
 {
     int r;
     int seq;
 
 retry:
     seq = c->c;
-    cd_mutex_unlock(m, tid);
+    cd_mutex_unlock(m);
 
     // val3 (last arg) is ignored
     r = sys_futex(&c->c, FUTEX_WAIT_REQUEUE_PI, seq, abstime, &c->m, 0);
     // return EAGAIN if *addr1 != val1 at the time of the call
 
     if (r == EAGAIN) {
-        cd_mutex_lock(m, tid, NULL);
+        cd_mutex_lock(m, NULL);
         goto retry;
     }
 
-    cd_mutex_unlock(&c->m, 0);
+    cd_mutex_unlock(&c->m);
 
-    cd_mutex_lock(m, tid, NULL);
+    cd_mutex_lock(m, NULL);
     return r;
 }

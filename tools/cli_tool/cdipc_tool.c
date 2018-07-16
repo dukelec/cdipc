@@ -371,7 +371,7 @@ int cmd_dump(int argc, char **argv)
     cdipc_hdr_t *hdr = ch->hdr;
     printf("our tid: %08x, futex: %08x, cond: %08x %08x\n",
             tid, hdr->mutex, hdr->cond.c, hdr->cond.m);
-    cd_mutex_lock(&hdr->mutex, tid, NULL);
+    cd_mutex_lock(&hdr->mutex, NULL);
 
     printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
             hdr->type == CDIPC_SERVICE ? "service" : "topic",
@@ -415,7 +415,7 @@ int cmd_dump(int argc, char **argv)
         printf("]\n");
     }
 
-    cd_mutex_unlock(&hdr->mutex, tid);
+    cd_mutex_unlock(&hdr->mutex);
     return 0;
 }
 

@@ -137,7 +137,7 @@ int cdipc_unlink(const char *name)
 
 
 // normally: -1 for auto detect, 0 for reset to zero
-void cdipc_set_tid(cdipc_ch_t *ch, int tid)
+static void cdipc_set_tid(cdipc_ch_t *ch, int tid)
 {
     if (tid == -1)
         tid = syscall(SYS_gettid);
@@ -206,9 +206,8 @@ int cdipc_recover(cdipc_ch_t *ch)
     int n = 0;
     int i;
     cdipc_hdr_t *hdr = ch->hdr;
-    int tid = ch->role == CDIPC_SUB ? ch->sub->tid : ch->pub->tid;
 
-    if (cd_mutex_lock(&hdr->mutex, tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -254,7 +253,7 @@ int cdipc_recover(cdipc_ch_t *ch)
 
     if (n)
         cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex, tid);
+    cd_mutex_unlock(&hdr->mutex);
     return n;
 }
 
@@ -287,12 +286,12 @@ cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
     cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_PUB);
 
-    if (cd_mutex_lock(&hdr->mutex, pub->tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return NULL;
     }
     while (!(nd = rlist_get_entry(hdr, &hdr->free, cdipc_nd_t))) {
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, pub->tid, abstime);
+        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
@@ -308,7 +307,7 @@ cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
         nd->len = 0;
         nd->len_r = 0;
     }
-    cd_mutex_unlock(&hdr->mutex, pub->tid);
+    cd_mutex_unlock(&hdr->mutex);
     return nd;
 }
 
@@ -320,7 +319,7 @@ int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
 
-    if (cd_mutex_lock(&hdr->mutex, pub->tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -337,7 +336,7 @@ int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
         if (!need_wait)
             break;
 
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, pub->tid, abstime);
+        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
@@ -376,7 +375,7 @@ int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
         cd_cond_broadcast(&hdr->cond);
     }
 
-    cd_mutex_unlock(&hdr->mutex, pub->tid);
+    cd_mutex_unlock(&hdr->mutex);
     return r;
 }
 
@@ -388,13 +387,13 @@ int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
 
-    if (cd_mutex_lock(&hdr->mutex, pub->tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
 
     while (nd->sub_ref & 1) {
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, pub->tid, abstime);
+        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
@@ -403,7 +402,7 @@ int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
         }
     }
 
-    cd_mutex_unlock(&hdr->mutex, pub->tid);
+    cd_mutex_unlock(&hdr->mutex);
     return r;
 }
 
@@ -413,7 +412,7 @@ int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
     cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB && hdr->type == CDIPC_SERVICE);
 
-    if (cd_mutex_lock(&hdr->mutex, pub->tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -421,7 +420,7 @@ int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
     if (!nd->sub_ref && nd->pub_id < 0)
         rlist_put(hdr, &hdr->free, &nd->node);
     cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex, pub->tid);
+    cd_mutex_unlock(&hdr->mutex);
     return 0;
 }
 
@@ -436,14 +435,14 @@ cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
     cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_SUB);
 
-    if (cd_mutex_lock(&hdr->mutex, sub->tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return NULL;
     }
 
 pick_node:
     while (!(wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t))) {
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, sub->tid, abstime);
+        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
         if (r == ETIMEDOUT) {
             break;
         } else if (r != 0) {
@@ -467,7 +466,7 @@ pick_node:
     }
 
     cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex, sub->tid);
+    cd_mutex_unlock(&hdr->mutex);
     return nd;
 }
 
@@ -483,7 +482,7 @@ int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)
         return -1;
     }
 
-    if (cd_mutex_lock(&hdr->mutex, sub->tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -497,7 +496,7 @@ int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)
     }
 
     cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex, sub->tid);
+    cd_mutex_unlock(&hdr->mutex);
     return r;
 }
 
@@ -507,7 +506,7 @@ int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
     cdipc_sub_t *sub = ch->sub;
     assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_TOPIC);
 
-    if (cd_mutex_lock(&hdr->mutex, sub->tid, NULL)) {
+    if (cd_mutex_lock(&hdr->mutex, NULL)) {
         dnf_error(ch->name, "mutex_lock\n");
         return -1;
     }
@@ -517,6 +516,6 @@ int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
         rlist_put(hdr, &hdr->free, &nd->node);
 
     cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex, sub->tid);
+    cd_mutex_unlock(&hdr->mutex);
     return 0;
 }

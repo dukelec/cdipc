@@ -31,3 +31,5 @@ if nd:
 else:
     print('timeout')
 
+cdipc_close(ch)
+
