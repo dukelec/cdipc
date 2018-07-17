@@ -100,6 +100,7 @@ async def ws_serve(ws, url):
     
     except websockets.exceptions.ConnectionClosed:
         print('disconnect from path: ' + url)
+        cdipc_close(ch)
 
 
 if __name__ == "__main__":
