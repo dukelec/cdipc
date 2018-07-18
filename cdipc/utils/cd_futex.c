@@ -110,7 +110,6 @@ int cd_cond_wait(cd_cond_t *c, cd_mutex_t *m, const struct timespec *abstime)
     int r;
     int seq;
 
-retry:
     seq = c->c;
     cd_mutex_unlock(m);
 
@@ -118,13 +117,8 @@ retry:
     r = sys_futex(&c->c, FUTEX_WAIT_REQUEUE_PI, seq, abstime, &c->m, 0);
     // return EAGAIN if *addr1 != val1 at the time of the call
 
-    if (r == EAGAIN) {
-        cd_mutex_lock(m, NULL);
-        goto retry;
-    }
-
     cd_mutex_unlock(&c->m);
 
     cd_mutex_lock(m, NULL);
-    return r;
+    return r == EAGAIN ? 0 : r;
 }
