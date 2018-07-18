@@ -5,7 +5,11 @@
 %}
 
 
-%include "/usr/include/bits/types/struct_timespec.h"
+struct timespec {
+    time_t  tv_sec;
+    long    tv_nsec;
+};
+
 %include "../../cdipc/utils/cd_time.h"
 %include "../../cdipc/cdipc.h"
 

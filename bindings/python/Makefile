@@ -33,7 +33,7 @@ vpath %.c $(sort $(dir $(C_SOURCES)))
 
 I_INCLUDES = $(foreach includedir,$(INCLUDES),-I$(includedir))
 CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC -I$(PY_INC_DIR)
-LDFLAGS = -lcdipc -lpthread -lrt -shared
+LDFLAGS = -lcdipc -lpthread -lrt -shared -L../../cdipc
 
 DEPS = $(foreach includedir,$(INCLUDES),$(wildcard $(includedir)/*.h))
 
