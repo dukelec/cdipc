@@ -32,18 +32,16 @@ OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
 
 I_INCLUDES = $(foreach includedir,$(INCLUDES),-I$(includedir))
-CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC -I$(PY_INC_DIR)
+CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC -O2 -MMD -MP -I$(PY_INC_DIR)
 LDFLAGS = -lcdipc -lpthread -lrt -shared -L../../cdipc
-
-DEPS = $(foreach includedir,$(INCLUDES),$(wildcard $(includedir)/*.h))
 
 main: $(TARGET)
 	@
 
 $(BUILD_DIR)/swig_cdipc_wrap.c: ../swig_cdipc.i | $(BUILD_DIR)
-	swig -o $(BUILD_DIR)/swig_cdipc_wrap.c -outdir ./ -python ../swig_cdipc.i
+	swig -MMD -MP -MF $(BUILD_DIR)/swig.d -threads -o $(BUILD_DIR)/swig_cdipc_wrap.c -outdir ./ -python ../swig_cdipc.i
 
-$(BUILD_DIR)/%.o: %.c $(DEPS) Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: %.c Makefile | $(BUILD_DIR)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 $(TARGET): $(OBJECTS)
@@ -52,13 +50,16 @@ $(TARGET): $(OBJECTS)
 $(BUILD_DIR):
 	mkdir $@
 
+-include $(BUILD_DIR)/*.d
+
 .PHONY: clean
 
 clean:
 	rm -rf cdipc.py $(BUILD_DIR) $(TARGET)
 
 install:
-	install -m 644 _cdipc.so $(PY_SITE_DIR)/
-	install -m 644 cdipc.py $(PY_SITE_DIR)/
-	install -m 644 cd_args.py $(PY_SITE_DIR)/
+	install -d $(DESTDIR)$(PY_SITE_DIR)/
+	install -m 644 _cdipc.so $(DESTDIR)$(PY_SITE_DIR)/
+	install -m 644 cdipc.py $(DESTDIR)$(PY_SITE_DIR)/
+	install -m 644 cd_args.py $(DESTDIR)$(PY_SITE_DIR)/
 

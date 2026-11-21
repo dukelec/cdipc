@@ -30,12 +30,10 @@ OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
 
 I_INCLUDES = $(foreach includedir,$(INCLUDES),-I$(includedir))
-CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC
+CFLAGS = $(I_INCLUDES) -DSW_VER=\"$(GIT_VERSION)\" -fPIC -O2 -Wall -MMD -MP
 LDFLAGS = -lrt -shared
 
-DEPS = $(foreach includedir,$(INCLUDES),$(wildcard $(includedir)/*.h))
-
-$(BUILD_DIR)/%.o: %.c $(DEPS) Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: %.c Makefile | $(BUILD_DIR)
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 $(TARGET): $(OBJECTS)
@@ -43,6 +41,8 @@ $(TARGET): $(OBJECTS)
 
 $(BUILD_DIR):
 	mkdir $@
+
+-include $(OBJECTS:.o=.d)
 
 .PHONY: clean
 

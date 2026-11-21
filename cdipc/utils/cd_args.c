@@ -44,6 +44,7 @@ int cd_args_free(cd_args_t *ca)
     cd_args_entry_t *entry;
     while ((entry = list_get_entry(&ca->head, cd_args_entry_t)))
         free(entry);
+    return 0;
 }
 
 
@@ -68,6 +69,7 @@ const char *cd_arg_get(cd_args_t *ca, const char *key)
             }
         }
     }
+    (void)pre; // only for list_for_each
     return NULL;
 }
 
@@ -90,5 +92,6 @@ const char *cd_arg_get_left(cd_args_t *ca)
             return entry->key;
         }
     }
+    (void)pre;
     return NULL;
 }
