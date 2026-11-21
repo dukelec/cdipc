@@ -75,6 +75,12 @@ Note: The log subscriber in service never reply to requester, it releases the no
 `make && sudo make install`
 
 
+### Test
+
+`make test` runs the regression and stress tests under `tests/`,
+`make test-ws` tests the websocket server (needs python websockets >= 14.2).
+
+
 ### Example
 
 There is a command line tool for test purpose, type `cdipc --help` for more details,

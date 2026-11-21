@@ -16,12 +16,20 @@ main:
 	$(MAKE) -C tools/cli_tool
 	$(MAKE) -C bindings/python
 
-.PHONY: clean
+test:
+	$(MAKE) -C cdipc
+	$(MAKE) -C tests test
+
+test-ws: main
+	$(MAKE) -C tests test-ws
+
+.PHONY: clean test test-ws
 
 clean:
 	$(MAKE) -C cdipc clean
 	$(MAKE) -C tools/cli_tool clean
 	$(MAKE) -C bindings/python clean
+	$(MAKE) -C tests clean
 
 install:
 	$(MAKE) -C cdipc install
