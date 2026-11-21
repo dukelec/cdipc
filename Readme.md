@@ -70,6 +70,12 @@ We can simply add one or more subscriber to each topic and service dedicated for
 Note: The log subscriber in service never reply to requester, it releases the node by `cdipc_sub_free`.
 
 
+### TODO
+
+ - Wait on multiple channels by one call: add a plain event counter to each subscriber,
+   wake it at publish and wait by `futex_waitv` (Linux >= 5.16).
+
+
 ### Install
 
 `make && sudo make install`

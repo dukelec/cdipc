@@ -98,7 +98,13 @@ static void ch_unlock(cdipc_ch_t *ch)
 static int ch_wait(cdipc_ch_t *ch, cd_cond_t *c, const struct timespec *abstime)
 {
     cdipc_hdr_t *hdr = ch->hdr;
+    struct timespec now;
     int r;
+
+    // expired already, e.g. zero for no wait: skip the syscall, it would take some us
+    if (abstime && !clock_gettime(CLOCK_MONOTONIC, &now) && (now.tv_sec > abstime->tv_sec ||
+            (now.tv_sec == abstime->tv_sec && now.tv_nsec >= abstime->tv_nsec)))
+        return ETIMEDOUT;
 
     hdr->busy = false;
     r = cd_cond_wait(c, &hdr->mutex, abstime);
@@ -544,6 +550,12 @@ cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
 
     ch_unlock(ch);
     return nd;
+}
+
+cdipc_nd_t *cdipc_sub_try_get(cdipc_ch_t *ch)
+{
+    const struct timespec no_wait = {0};
+    return cdipc_sub_get(ch, &no_wait);
 }
 
 int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)

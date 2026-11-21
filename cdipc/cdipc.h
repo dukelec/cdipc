@@ -125,6 +125,7 @@ int cdipc_close(cdipc_ch_t *ch);
 
 int cdipc_recover(cdipc_ch_t *ch);
 
+// abstime: CLOCK_MONOTONIC, NULL: wait forever, expired (e.g. zero): don't wait
 cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime);
 int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
         const struct timespec *abstime);
@@ -134,6 +135,7 @@ int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
 // free before reply cancels the request
 int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd);
 cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime);
+cdipc_nd_t *cdipc_sub_try_get(cdipc_ch_t *ch); // don't wait
 int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd);
 int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd);
 int cdipc_sub_cfg(cdipc_ch_t *ch, int max_len, bool need_wait);

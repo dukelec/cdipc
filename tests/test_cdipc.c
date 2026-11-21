@@ -10,9 +10,11 @@
 // Regression tests, every case ends with a shared memory invariant check.
 #include <time.h>
 #include <unistd.h>
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <sys/syscall.h>
 #include <inttypes.h>
@@ -592,6 +594,60 @@ static void t15_half_drop(void)
     cdipc_unlink(N);
 }
 
+static long sleeps(void) // voluntary context switches
+{
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    return ru.ru_nvcsw;
+}
+
+// an expired abstime must return at once, without sleeping in the kernel
+static void t16_no_wait(void)
+{
+    const char *N = "cdipc_test_16";
+    const struct timespec zero = {0};
+    cdipc_ch_t p, s;
+    mk(N, CDIPC_TOPIC, 1, 1, 2);
+    cfg(N, 0, 1, true);
+    cdipc_open(&p, N, CDIPC_PUB, 0);
+    cdipc_open(&s, N, CDIPC_SUB, 0);
+
+    pid_t pid = fork(); // a far future abstime, e.g. as forever, is not expired
+    if (pid == 0) {
+        const struct timespec far = {LONG_MAX, 0};
+        cdipc_sub_get(&s, &far);
+        _exit(0);
+    }
+    usleep(100000);
+    EXPECT(waitpid(pid, NULL, WNOHANG) == 0, "far future abstime returned at once");
+    kill(pid, SIGKILL);
+    waitpid(pid, NULL, 0);
+
+    long n = sleeps();
+    for (int i = 0; i < 1000; i++)
+        EXPECT(cdipc_sub_try_get(&s) == NULL, "node from an empty queue");
+    cdipc_nd_t *a = cdipc_pub_alloc(&p, &zero), *b = cdipc_pub_alloc(&p, &zero);
+    EXPECT(a && b && cdipc_pub_alloc(&p, &zero) == NULL, "alloc: 2 nodes only");
+    EXPECT(cdipc_pub_put(&p, a, &zero) == 0, "put");
+    EXPECT(cdipc_pub_put(&p, b, &zero) == ETIMEDOUT, "put to a full need_wait sub");
+    struct timespec past = after_ms(-5);
+    EXPECT(cdipc_pub_put(&p, b, &past) == ETIMEDOUT, "put with a past abstime");
+    n = sleeps() - n;
+    EXPECT(n == 0, "slept %ld times", n);
+
+    cdipc_nd_t *g = cdipc_sub_try_get(&s);
+    EXPECT(g && a && g->id == a->id, "try_get with data pending");
+    if (g)
+        cdipc_sub_free(&s, g);
+    if (b)
+        cdipc_pub_free(&p, b);
+    EXPECT(p.hdr->free.len == 2, "free.len %u", p.hdr->free.len);
+    check(&p, "t16");
+    cdipc_close(&p);
+    cdipc_close(&s);
+    cdipc_unlink(N);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -599,7 +655,7 @@ int main(void)
         t1_service_no_replier, t2_sub_id_above_31, t3_dead_owner, t4_fork_tid,
         t5_topic_recover_keeps_others, t6_service_give_up, t7_service_logger, t8_bad_id,
         t9_cond_dead_waiter, t10_misuse_guards, t11_dropped_request, t12_sub_cfg_wakes_pub,
-        t13_holder_dies_in_lock, t14_half_put, t15_half_drop,
+        t13_holder_dies_in_lock, t14_half_put, t15_half_drop, t16_no_wait,
     };
     for (unsigned i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
         int f = fails;
