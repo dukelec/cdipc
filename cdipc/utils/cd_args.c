@@ -4,7 +4,7 @@
  * Copyright (c) 2018, DUKELEC, Inc.
  * All rights reserved.
  *
- * Author: Duke Fong <duke@dukelec.com>
+ * Author: Duke Fong <d@d-l.io>
  */
 
 #include "cd_args.h"
@@ -51,6 +51,7 @@ int cd_args_free(cd_args_t *ca)
 const char *cd_arg_get(cd_args_t *ca, const char *key)
 {
     list_node_t *pre, *pos;
+    (void)pre; // list_for_each needs it, we don't
 
     list_for_each(&ca->head, pre, pos){
         cd_args_entry_t *entry = list_entry(pos, cd_args_entry_t);
@@ -69,7 +70,6 @@ const char *cd_arg_get(cd_args_t *ca, const char *key)
             }
         }
     }
-    (void)pre; // only for list_for_each
     return NULL;
 }
 
@@ -84,6 +84,7 @@ const char *cd_arg_get2(cd_args_t *ca, const char *key1, const char *key2)
 const char *cd_arg_get_left(cd_args_t *ca)
 {
     list_node_t *pre, *pos;
+    (void)pre; // list_for_each needs it, we don't
 
     list_for_each(&ca->head, pre, pos){
         cd_args_entry_t *entry = list_entry(pos, cd_args_entry_t);
@@ -92,6 +93,5 @@ const char *cd_arg_get_left(cd_args_t *ca)
             return entry->key;
         }
     }
-    (void)pre;
     return NULL;
 }

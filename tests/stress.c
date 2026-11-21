@@ -10,6 +10,7 @@
 // Multi-process stress: topic (3 pub, 6 sub) + service (4 requester, replier, logger).
 // "kill" mode SIGKILLs random workers and respawns them (they cdipc_recover first).
 #include <time.h>
+#include <unistd.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/wait.h>

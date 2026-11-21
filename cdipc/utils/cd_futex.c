@@ -11,6 +11,7 @@
 #include <sys/syscall.h>
 #include <linux/futex.h>
 #include <limits.h>
+#include <unistd.h>
 
 #include "cd_utils.h"
 #include "cd_debug.h"

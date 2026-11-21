@@ -9,6 +9,7 @@
 
 // Regression tests, every case ends with a shared memory invariant check.
 #include <time.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>

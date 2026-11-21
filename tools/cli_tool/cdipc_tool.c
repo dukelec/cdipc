@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <assert.h>
 #include <inttypes.h>
 

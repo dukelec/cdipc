@@ -4,18 +4,13 @@
  * Copyright (c) 2017, DUKELEC, Inc.
  * All rights reserved.
  *
- * Author: Duke Fong <duke@dukelec.com>
+ * Author: Duke Fong <d@d-l.io>
  */
 
 #ifndef __CD_UTILS_H__
 #define __CD_UTILS_H__
 
-#if __has_include("config.h")
-#include "config.h"
-#endif
-
 #include <errno.h>
-#include <sys/unistd.h> // STDOUT_FILENO, STDERR_FILENO
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -23,7 +18,19 @@
 #include <stdbool.h>
 #include <stddef.h>     // provide offsetof, NULL
 #include <stdint.h>
-#include <linux/limits.h>
+#include <inttypes.h>
+
+#ifdef __has_include
+#if __has_include("cd_config.h")
+#include "cd_config.h"
+#endif
+#if __has_include("arch_wrapper.h")
+#include "arch_wrapper.h"
+#endif
+#else
+#include "cd_config.h"
+#include "arch_wrapper.h"
+#endif
 
 //#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
 //#define NULL 0
@@ -32,6 +39,8 @@
 #define container_of(ptr, type, member) \
     ((type *)((char *)(ptr) - offsetof(type, member)))
 #endif
+
+#if !__STRICT_ANSI__ && __GNUC__ >= 3
 
 #ifndef sign
 #define sign(a) ({                  \
@@ -67,16 +76,144 @@
 #endif
 
 /*
- * Divide positive or negative dividend by positive divisor and round
- * to closest integer. Result is undefined for negative divisors and
- * for negative dividends if the divisor variable type is unsigned.
+ * Divide and round to the closest integer; dividend and divisor may each be
+ * positive or negative, unless either is of an unsigned type: then both
+ * must be non-negative (a negative operand would be converted to unsigned).
  */
-#define DIV_ROUND_CLOSEST(x, divisor)({                                     \
+#define DIV_ROUND_CLOSEST(x, divisor) ({                                    \
         typeof(x) __x = x;                                                  \
         typeof(divisor) __d = divisor;                                      \
-        (((typeof(x))-1) > 0 || ((typeof(divisor))-1) > 0 || (__x) > 0) ?   \
+        (((typeof(x))-1) > 0 || ((typeof(divisor))-1) > 0 ||                \
+                (((__x) > 0) == ((__d) > 0))) ?                             \
                 (((__x) + ((__d) / 2)) / (__d)) :                           \
                 (((__x) - ((__d) / 2)) / (__d));                            \
     })
+
+/*
+ * Divide signed x by 2^n (arithmetic shift right) and round to closest
+ * integer, ties away from zero: DIV_ROUND_POW2(-6, 2) == -2.
+ */
+#define DIV_ROUND_POW2(x, n) ({                                     \
+        typeof(x) __x = (x);                                        \
+        (__x + ((typeof(x))1 << ((n) - 1)) - (__x < 0)) >> (n);     \
+    })
+
+#ifndef __weak
+#define __weak  __attribute__((weak))
+#endif
+
+#else
+
+// simple version without GCC's statement expression ({...})
+#ifndef sign
+#define sign(a) (((a) < 0) ? -1 : ((a) > 0))
+#endif
+#ifndef max
+#define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+#ifndef min
+#define min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+#ifndef clip
+#define clip(a, b, c) ((a) < (b) ? (b) : ((a) > (c) ? (c) : (a)))
+#endif
+#define DIV_ROUND_CLOSEST(x, divisor) (((x) + ((divisor) / 2)) / (divisor))
+#define DIV_ROUND_POW2(x, n) (((x) + (1LL << ((n) - 1)) - ((x) < 0)) >> (n))
+
+#endif
+
+
+typedef volatile uint32_t cd_spinlock_t;
+
+#ifdef CD_SMP
+static inline void cd_spin_lock(cd_spinlock_t *lock)
+{
+    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE)) {}
+}
+
+static inline void cd_spin_unlock(cd_spinlock_t *lock)
+{
+    __atomic_clear(lock, __ATOMIC_RELEASE);
+}
+
+#define cd_spin_lock_irqsave(lock, flags)       \
+    do {                                        \
+        flags = _cd_spin_lock_irqsave(lock);    \
+    } while (0)
+
+static inline uint32_t _cd_spin_lock_irqsave(cd_spinlock_t *lock)
+{
+    uint32_t flags = _local_irq_save();
+    cd_spin_lock(lock);
+    return flags;
+}
+
+static inline void cd_spin_unlock_irqrestore(cd_spinlock_t *lock, uint32_t flags)
+{
+    cd_spin_unlock(lock);
+    local_irq_restore(flags);
+}
+
+#define cd_irq_save     cd_spin_lock_irqsave
+#define cd_irq_restore  cd_spin_unlock_irqrestore
+#else
+#define cd_irq_save(lock, flags)        \
+    do {                                \
+        (void)(lock);                   \
+        local_irq_save(flags);          \
+    } while (0)
+
+#define cd_irq_restore(lock, flags)     \
+    do {                                \
+        (void)(lock);                   \
+        local_irq_restore(flags);       \
+    } while (0)
+#endif
+
+
+static inline uint16_t get_unaligned16(const uint8_t *p)
+{
+    return p[0] | p[1] << 8;
+}
+
+static inline uint32_t get_unaligned32(const uint8_t *p)
+{
+    return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+static inline void put_unaligned16(uint16_t val, uint8_t *p)
+{
+    *p++ = val;
+    *p++ = val >> 8;
+}
+
+static inline void put_unaligned32(uint32_t val, uint8_t *p)
+{
+    put_unaligned16(val >> 16, p + 2);
+    put_unaligned16(val, p);
+}
+
+
+static inline uint16_t get_unaligned_be16(const uint8_t *p)
+{
+    return p[1] | p[0] << 8;
+}
+
+static inline uint32_t get_unaligned_be32(const uint8_t *p)
+{
+    return p[3] | p[2] << 8 | p[1] << 16 | (uint32_t)p[0] << 24;
+}
+
+static inline void put_unaligned_be16(uint16_t val, uint8_t *p)
+{
+    *p++ = val >> 8;
+    *p++ = val;
+}
+
+static inline void put_unaligned_be32(uint32_t val, uint8_t *p)
+{
+    put_unaligned_be16(val >> 16, p);
+    put_unaligned_be16(val, p + 2);
+}
 
 #endif

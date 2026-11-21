@@ -7,10 +7,10 @@
  * Author: Duke Fong <duke@dukelec.com>
  */
 
-#ifndef __CONFIG_H__
-#define __CONFIG_H__
+#ifndef __CD_CONFIG_H__
+#define __CD_CONFIG_H__
 
-#define DEBUG
+#define CD_DEBUG
 
 #endif
 

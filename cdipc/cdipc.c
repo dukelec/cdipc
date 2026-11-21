@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <assert.h>
 #include "utils/cd_utils.h"
 #include "utils/cd_debug.h"
