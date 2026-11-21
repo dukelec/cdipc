@@ -10,13 +10,21 @@
 #ifndef __CDIPC_H__
 #define __CDIPC_H__
 
-#include "utils/cd_utils.h"
-#include "utils/cd_debug.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <time.h>
+#include <linux/limits.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "utils/cd_rlist.h"
 #include "utils/cd_time.h"
 #include "utils/cd_futex.h"
 
-#define CDIPC_MAGIC_NUM 0xcdcd0001
+#define CDIPC_MAGIC_NUM 0xcdcd0002
 
 
 typedef enum {
@@ -46,8 +54,8 @@ typedef struct {
 
 typedef struct {
     rlist_node_t    node;
-    cdipc_nd_t      *r_nd;
-} cdipc_wp_t;                   // wrapper
+} cdipc_wp_t;                   // wrapper: wps[sub_id * max_nd + nd_id] links
+                                // the nd into pend_head of the sub
 
 typedef struct {
     int             id;
@@ -60,6 +68,7 @@ typedef struct {
     int             max_len;
     bool            need_wait;
     rlist_head_t    pend_head;
+    cd_cond_t       cond;       // wakes this sub only
 } cdipc_sub_t;
 
 typedef struct {
@@ -73,9 +82,9 @@ typedef struct {
     size_t          max_len_r;
 
     cd_mutex_t      mutex;
-    cd_cond_t       cond;
+    bool            busy;       // set inside the lock, found set at lock: last holder died
+    cd_cond_t       cond;       // wakes pubs: free node, pend room, reply
 
-    rlist_head_t    free_wp;
     rlist_head_t    free;
 } cdipc_hdr_t;
 
@@ -101,29 +110,10 @@ typedef struct {
 
 
 
-static cdipc_nd_t *cd_nd2r(const void *base, cdipc_nd_t *nd)
+// nd of a wrapper in pend_head
+static inline cdipc_nd_t *cdipc_wp2nd(const cdipc_ch_t *ch, const cdipc_wp_t *wp)
 {
-    if (nd == NULL)
-        return NULL;
-    return (cdipc_nd_t *)((void *)nd - (ptrdiff_t)base);
-}
-static cdipc_nd_t *cd_r2nd(const void *base, cdipc_nd_t *nd)
-{
-    if (nd == NULL)
-        return NULL;
-    return (cdipc_nd_t *)((void *)nd + (ptrdiff_t)base);
-}
-static cdipc_wp_t *cd_wp2r(const void *base, cdipc_wp_t *wp)
-{
-    if (wp == NULL)
-        return NULL;
-    return (cdipc_wp_t *)((void *)wp - (ptrdiff_t)base);
-}
-static cdipc_wp_t *cd_r2wp(const void *base, cdipc_wp_t *wp)
-{
-    if (wp == NULL)
-        return NULL;
-    return (cdipc_wp_t *)((void *)wp + (ptrdiff_t)base);
+    return (cdipc_nd_t *)((char *)ch->nds + ch->nd_len * ((wp - ch->wps) % ch->hdr->max_nd));
 }
 
 int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
@@ -138,11 +128,18 @@ int cdipc_recover(cdipc_ch_t *ch);
 cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime);
 int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
         const struct timespec *abstime);
+// ECANCELED: request dropped or aborted, no valid reply
 int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
         const struct timespec *abstime);
+// free before reply cancels the request
 int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd);
 cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime);
 int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd);
 int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd);
+int cdipc_sub_cfg(cdipc_ch_t *ch, int max_len, bool need_wait);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

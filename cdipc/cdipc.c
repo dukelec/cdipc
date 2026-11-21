@@ -8,32 +8,132 @@
  */
 
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <fcntl.h>
 #include <assert.h>
+#include "utils/cd_utils.h"
+#include "utils/cd_debug.h"
 #include "cdipc.h"
 
+// 8 instead of sizeof(void *): keep uint64_t aligned on 32-bit targets
+#define CDIPC_ALIGN(x)  (((x) + 7) & ~(size_t)7)
 
-static void cdipc_cal_addr(cdipc_ch_t *ch, bool update_hdr)
+
+// set area pointers, return total size
+static size_t cdipc_cal_addr(cdipc_ch_t *ch)
 {
     cdipc_hdr_t *hdr = ch->hdr;
-    void *end_addr;
-    size_t align_mask = sizeof(void *) - 1;
-    if (update_hdr) {
-        hdr->max_len = (hdr->max_len + align_mask) & ~align_mask;
-        hdr->max_len_r = (hdr->max_len_r + align_mask) & ~align_mask;
-        if (hdr->type != CDIPC_SERVICE)
-            hdr->max_len_r = 0;
-
-    }
-    ch->pubs = (void *)ch->hdr + sizeof(cdipc_hdr_t);
-    ch->subs = (void *)ch->pubs + sizeof(cdipc_pub_t) * hdr->max_pub;
-    ch->wps = (void *)ch->subs + sizeof(cdipc_sub_t) * hdr->max_sub;
-    ch->nds = (void *)ch->wps + sizeof(cdipc_wp_t) * hdr->max_nd * hdr->max_sub;
-    ch->nd_len = sizeof(cdipc_nd_t) + hdr->max_len + hdr->max_len_r;
-    end_addr = (void *)ch->nds + ch->nd_len * hdr->max_nd;
-    ch->map_len = (ptrdiff_t)end_addr - (ptrdiff_t)ch->hdr;
+    ch->pubs = (void *)hdr + CDIPC_ALIGN(sizeof(cdipc_hdr_t));
+    ch->subs = (void *)ch->pubs + CDIPC_ALIGN(sizeof(cdipc_pub_t) * hdr->max_pub);
+    ch->wps = (void *)ch->subs + CDIPC_ALIGN(sizeof(cdipc_sub_t) * hdr->max_sub);
+    ch->nds = (void *)ch->wps + CDIPC_ALIGN(sizeof(cdipc_wp_t) * hdr->max_nd * hdr->max_sub);
+    ch->nd_len = CDIPC_ALIGN(sizeof(cdipc_nd_t) + hdr->max_len + hdr->max_len_r);
+    return (void *)ch->nds + ch->nd_len * hdr->max_nd - (void *)hdr;
 }
+
+// last lock holder died inside the lock, any update may be half done:
+// pend lists are the truth for sub refs, node states for the free list
+static void ch_repair(cdipc_ch_t *ch)
+{
+    int i, n;
+    cdipc_hdr_t *hdr = ch->hdr;
+
+    dnf_warn(ch->name, "lock holder died, repair\n");
+    for (i = 0; i < hdr->max_sub; i++) {
+        cdipc_sub_t *sub = ch->subs + i;
+        cdipc_wp_t *wps = ch->wps + i * hdr->max_nd; // the only ones allowed in this list
+        rlist_node_t *rnode = sub->pend_head.rfirst, *last = NULL;
+
+        for (n = 0; rnode && n < hdr->max_nd; n++) {
+            cdipc_wp_t *wp = rlist_entry((void *)rnode + (ptrdiff_t)hdr, cdipc_wp_t);
+            size_t ofs = (void *)wp - (void *)wps;
+            if (ofs % sizeof(cdipc_wp_t) || ofs / sizeof(cdipc_wp_t) >= (size_t)hdr->max_nd)
+                break;
+            cdipc_wp2nd(ch, wp)->sub_ref |= 1ULL << i;
+            last = &wp->node;
+            rnode = last->rnext;
+        }
+        sub->pend_head.len = n;
+        sub->pend_head.rlast = last ? (void *)last - (ptrdiff_t)hdr : NULL;
+        if (last)
+            last->rnext = NULL;
+        else
+            sub->pend_head.rfirst = NULL;
+        if (n)
+            cd_cond_broadcast(&sub->cond);
+    }
+
+    memset(&hdr->free, 0, sizeof(rlist_head_t));
+    for (i = 0; i < hdr->max_nd; i++) {
+        cdipc_nd_t *nd = (void *)ch->nds + ch->nd_len * i;
+        if (!nd->sub_ref && nd->pub_id < 0)
+            rlist_put(hdr, &hdr->free, &nd->node);
+    }
+    cd_cond_broadcast(&hdr->cond);
+}
+
+static int ch_lock(cdipc_ch_t *ch)
+{
+    cdipc_hdr_t *hdr = ch->hdr;
+    int r = cd_mutex_lock(&hdr->mutex, NULL);
+
+    if (r && r != EOWNERDEAD) {
+        dnf_error(ch->name, "mutex_lock: %d\n", r);
+        return r;
+    }
+    if (hdr->busy)
+        ch_repair(ch);
+    hdr->busy = true;
+    return 0;
+}
+
+static void ch_unlock(cdipc_ch_t *ch)
+{
+    ch->hdr->busy = false;
+    cd_mutex_unlock(&ch->hdr->mutex);
+}
+
+static int ch_wait(cdipc_ch_t *ch, cd_cond_t *c, const struct timespec *abstime)
+{
+    cdipc_hdr_t *hdr = ch->hdr;
+    int r;
+
+    hdr->busy = false;
+    r = cd_cond_wait(c, &hdr->mutex, abstime);
+    if (hdr->busy)
+        ch_repair(ch);
+    hdr->busy = true;
+    if (r && r != ETIMEDOUT)
+        dnf_error(ch->name, "cond_wait: %d\n", r);
+    return r;
+}
+
+// the only way back to free list, besides ch_repair
+static void nd_check_free(cdipc_hdr_t *hdr, cdipc_nd_t *nd)
+{
+    if (!nd->sub_ref && nd->pub_id < 0) {
+        rlist_put(hdr, &hdr->free, &nd->node);
+        cd_cond_broadcast(&hdr->cond);
+    }
+}
+
+static void nd_pub_release(cdipc_hdr_t *hdr, cdipc_nd_t *nd)
+{
+    if (hdr->type == CDIPC_SERVICE && (nd->sub_ref & 1))
+        nd->abort = true; // not replied yet, cancel it
+    nd->pub_id = -1;
+    nd_check_free(hdr, nd);
+}
+
+static void nd_sub_release(cdipc_hdr_t *hdr, cdipc_nd_t *nd, int sub_id)
+{
+    nd->sub_ref &= ~(1ULL << sub_id);
+    if (hdr->type == CDIPC_SERVICE && sub_id == 0)
+        cd_cond_broadcast(&hdr->cond); // requester waits for bit 0
+    nd_check_free(hdr, nd);
+}
+
 
 int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
         int max_nd, size_t max_len, size_t max_len_r)
@@ -43,9 +143,10 @@ int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
     cdipc_ch_t _ch = {0};
     cdipc_ch_t *ch = &_ch;
 
-    if (!max_pub || !max_sub || !max_nd || !max_len ||
+    // max_sub is limited by the 64-bit sub_ref
+    if (max_pub <= 0 || max_sub <= 0 || max_sub > 64 || max_nd <= 0 || !max_len ||
             (type == CDIPC_SERVICE && !max_len_r)) {
-        dnf_error(name, "zero arguments detected\n");
+        dnf_error(name, "invalid arguments\n");
         return -1;
     }
 
@@ -53,11 +154,11 @@ int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
     hdr_tmp.max_pub = max_pub;
     hdr_tmp.max_sub = max_sub;
     hdr_tmp.max_nd = max_nd;
-    hdr_tmp.max_len = max_len;
-    hdr_tmp.max_len_r = max_len_r;
+    hdr_tmp.max_len = CDIPC_ALIGN(max_len);
+    hdr_tmp.max_len_r = type == CDIPC_SERVICE ? CDIPC_ALIGN(max_len_r) : 0;
     ch->hdr = &hdr_tmp;
-    cdipc_cal_addr(ch, true); // only for map_len
-    strncpy(ch->name, name, NAME_MAX);
+    ch->map_len = cdipc_cal_addr(ch); // only for map_len
+    snprintf(ch->name, sizeof(ch->name), "%s", name);
 
     ch->fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR | O_TRUNC, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
@@ -66,7 +167,7 @@ int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
     }
 
     if (ftruncate(ch->fd, ch->map_len) == -1) {
-        dnf_error(ch->name, "ftruncate to size %ld\n", ch->map_len);
+        dnf_error(ch->name, "ftruncate to size %zu\n", ch->map_len);
         goto exit_free_fd;
     }
 
@@ -77,7 +178,7 @@ int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
         goto exit_free_fd;
     }
     memcpy(ch->hdr, &hdr_tmp, sizeof(cdipc_hdr_t));
-    cdipc_cal_addr(ch, false); // re-cal for pointers
+    cdipc_cal_addr(ch); // re-cal for pointers
 
     if ((r = cd_mutex_init(&ch->hdr->mutex, NULL))) {
         dnf_error(ch->name, "cd_mutex_init, ret: %d\n", r);
@@ -98,11 +199,7 @@ int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
         cdipc_sub_t *sub = ch->subs + i;
         memset(sub, 0, sizeof(cdipc_sub_t));
         sub->id = i;
-    }
-    for (i = 0; i < max_nd * max_sub; i++) {
-        cdipc_wp_t *wp = ch->wps + i;
-        memset(wp, 0, sizeof(cdipc_wp_t));
-        rlist_put(ch->hdr, &ch->hdr->free_wp, &wp->node);
+        cd_cond_init(&sub->cond, NULL);
     }
     for (i = 0; i < max_nd; i++) {
         cdipc_nd_t *nd = (void *)ch->nds + ch->nd_len * i;
@@ -113,7 +210,8 @@ int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
         rlist_put(ch->hdr, &ch->hdr->free, &nd->node);
     }
 
-    ch->hdr->magic = CDIPC_MAGIC_NUM;
+    // set magic last, cdipc_open reads it with acquire
+    __atomic_store_n(&ch->hdr->magic, CDIPC_MAGIC_NUM, __ATOMIC_RELEASE);
     return cdipc_close(ch);
 
 exit_free_mmap:
@@ -151,8 +249,11 @@ static void cdipc_set_tid(cdipc_ch_t *ch, int tid)
 int cdipc_open(cdipc_ch_t *ch, const char *name,
         cdipc_role_t role, int id)
 {
+    struct stat st;
+    cdipc_hdr_t *hdr;
+
     memset(ch, 0, sizeof(cdipc_ch_t));
-    strncpy(ch->name, name, NAME_MAX);
+    snprintf(ch->name, sizeof(ch->name), "%s", name);
 
     ch->fd = shm_open(name, O_RDWR, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
@@ -160,45 +261,53 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
         return ch->fd;
     }
 
-    ch->hdr = (cdipc_hdr_t*) mmap(NULL, sizeof(cdipc_hdr_t),
+    // size stays 0 until the creator's ftruncate, touching it would SIGBUS
+    if (fstat(ch->fd, &st) || st.st_size < (off_t)sizeof(cdipc_hdr_t)) {
+        dnf_error(ch->name, "not initialized\n");
+        goto exit_close;
+    }
+    ch->map_len = st.st_size;
+    hdr = ch->hdr = (cdipc_hdr_t*) mmap(NULL, ch->map_len,
             PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
-    if (ch->hdr == MAP_FAILED) {
+    if (hdr == MAP_FAILED) {
         dnf_error(ch->name, "mmap\n");
-        return -1;
+        ch->hdr = NULL;
+        goto exit_close;
     }
-    if (ch->hdr->magic != CDIPC_MAGIC_NUM) {
+    if (__atomic_load_n(&hdr->magic, __ATOMIC_ACQUIRE) != CDIPC_MAGIC_NUM) {
         dnf_error(ch->name, "wrong magic num: %08x, expect: %08x\n",
-                ch->hdr->magic, CDIPC_MAGIC_NUM);
-        munmap(ch->hdr, sizeof(cdipc_hdr_t));
-        return -1;
+                hdr->magic, CDIPC_MAGIC_NUM);
+        goto exit_unmap;
     }
-    cdipc_cal_addr(ch, false);
-
-    if (-1 == munmap(ch->hdr, sizeof(cdipc_hdr_t))) {
-        dnf_error(ch->name, "munmap\n");
-        return -1;
+    if (cdipc_cal_addr(ch) > ch->map_len) {
+        dnf_error(ch->name, "size mismatch\n");
+        goto exit_unmap;
     }
-
-    ch->hdr = (cdipc_hdr_t*) mmap(NULL, ch->map_len,
-            PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
-    if (ch->hdr == MAP_FAILED) {
-        dnf_error(ch->name, "re-mmap\n");
-        return -1;
-    }
-    cdipc_cal_addr(ch, false); // update pointers after re-mmap
 
     ch->role = role;
-    if (role == CDIPC_PUB) {
-        ch->pub = ch->pubs + id;
-        cdipc_set_tid(ch, -1);
-    } else if (role == CDIPC_SUB) {
-        ch->sub = ch->subs + id;
+    if (role == CDIPC_PUB || role == CDIPC_SUB) {
+        int max = role == CDIPC_PUB ? hdr->max_pub : hdr->max_sub;
+        if (id < 0 || id >= max) {
+            dnf_error(ch->name, "id %d out of range, max: %d\n", id, max);
+            goto exit_unmap;
+        }
+        if (role == CDIPC_PUB)
+            ch->pub = ch->pubs + id;
+        else
+            ch->sub = ch->subs + id;
         cdipc_set_tid(ch, -1);
     } else {
         dnf_debug(ch->name, "neither sub nor pub\n");
     }
-
     return 0;
+
+exit_unmap:
+    munmap(ch->hdr, ch->map_len);
+    ch->hdr = NULL;
+exit_close:
+    close(ch->fd);
+    ch->fd = -1;
+    return -1;
 }
 
 int cdipc_recover(cdipc_ch_t *ch)
@@ -207,22 +316,19 @@ int cdipc_recover(cdipc_ch_t *ch)
     int i;
     cdipc_hdr_t *hdr = ch->hdr;
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+    if (ch_lock(ch))
         return -1;
-    }
 
     if (ch->role == CDIPC_SUB) {
         cdipc_sub_t *sub = ch->sub;
         for (i = 0; i < hdr->max_nd; i++) {
             cdipc_nd_t *nd = (void *)ch->nds + ch->nd_len * i;
-            if (nd->sub_ref & (1 << sub->id)) {
+            if (nd->sub_ref & (1ULL << sub->id)) {
                 bool found = false;
                 rlist_node_t *rnode, *node;
                 for (rnode = sub->pend_head.rfirst; rnode != NULL; rnode = node->rnext) {
                     node = (void *)rnode + (ptrdiff_t)hdr;
-                    cdipc_wp_t *wp = rlist_entry(node, cdipc_wp_t);
-                    if (cd_r2nd(hdr, wp->r_nd) == nd) {
+                    if (cdipc_wp2nd(ch, rlist_entry(node, cdipc_wp_t)) == nd) {
                         found = true;
                         break;
                     }
@@ -230,11 +336,11 @@ int cdipc_recover(cdipc_ch_t *ch)
                 if (found)
                     continue;
                 n++;
-                nd->sub_ref &= ~(1 << sub->id);
-                nd->len_r = 0;
-                nd->abort = true;
-                if (!nd->sub_ref && nd->pub_id < 0)
-                    rlist_put(hdr, &hdr->free, &nd->node);
+                if (hdr->type == CDIPC_SERVICE && sub->id == 0) {
+                    nd->len_r = 0; // replier died before reply
+                    nd->abort = true;
+                }
+                nd_sub_release(hdr, nd, sub->id);
             }
         }
     } else if (ch->role == CDIPC_PUB) {
@@ -243,17 +349,12 @@ int cdipc_recover(cdipc_ch_t *ch)
             cdipc_nd_t *nd = (void *)ch->nds + ch->nd_len * i;
             if (nd->pub_id == pub->id) {
                 n++;
-                nd->pub_id = -1;
-                nd->abort = true;
-                if (!nd->sub_ref && nd->pub_id < 0)
-                    rlist_put(hdr, &hdr->free, &nd->node);
+                nd_pub_release(hdr, nd);
             }
         }
     }
 
-    if (n)
-        cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex);
+    ch_unlock(ch);
     return n;
 }
 
@@ -280,24 +381,17 @@ int cdipc_close(cdipc_ch_t *ch)
 
 cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
 {
-    int r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_pub_t *pub = ch->pub;
     cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_PUB);
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+    if (ch_lock(ch))
         return NULL;
-    }
+
     while (!(nd = rlist_get_entry(hdr, &hdr->free, cdipc_nd_t))) {
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
-        if (r == ETIMEDOUT) {
+        if (ch_wait(ch, &hdr->cond, abstime))
             break;
-        } else if (r != 0) {
-            dnf_error(ch->name, "cond_wait, ret: %d\n", r);
-            break;
-        }
     }
     if (nd) {
         nd->abort = false;
@@ -307,8 +401,19 @@ cdipc_nd_t *cdipc_pub_alloc(cdipc_ch_t *ch, const struct timespec *abstime)
         nd->len = 0;
         nd->len_r = 0;
     }
-    cd_mutex_unlock(&hdr->mutex);
+    ch_unlock(ch);
     return nd;
+}
+
+static bool pub_need_wait(cdipc_ch_t *ch)
+{
+    int i;
+    for (i = 0; i < ch->hdr->max_sub; i++) {
+        cdipc_sub_t *sub = ch->subs + i;
+        if (sub->need_wait && sub->max_len && sub->pend_head.len >= sub->max_len)
+            return true;
+    }
+    return false;
 }
 
 int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
@@ -316,206 +421,177 @@ int cdipc_pub_put(cdipc_ch_t *ch, cdipc_nd_t *nd,
 {
     int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+    if (ch_lock(ch))
         return -1;
+
+    if (nd->pub_id != ch->pub->id || nd->sub_ref) {
+        dnf_error(ch->name, "node %d not owned or still in use\n", nd->id);
+        r = -1;
+        goto out;
     }
 
-    while (true) {
-        bool need_wait = false;
-        for (i = 0; i < hdr->max_sub; i++) {
-            cdipc_sub_t *sub = ch->subs + i;
-            if (sub->need_wait && sub->pend_head.len == sub->max_len) {
-                need_wait = true;
-                break;
-            }
-        }
-        if (!need_wait)
-            break;
-
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
-        if (r == ETIMEDOUT) {
-            break;
-        } else if (r != 0) {
-            dnf_error(ch->name, "cond_wait, ret: %d\n", r);
-            break;
-        }
+    while (pub_need_wait(ch)) {
+        if ((r = ch_wait(ch, &hdr->cond, abstime)))
+            goto out;
     }
 
-    if (r == 0) {
-        bool drop = true;
-        if (hdr->type == CDIPC_TOPIC)
-            nd->pub_id = -1;
-        for (i = 0; i < hdr->max_sub; i++) {
-            cdipc_sub_t *sub = ch->subs + i;
-            if (sub->max_len != 0) {
-                drop = false;
-                if (sub->pend_head.len == sub->max_len) {
-                    cdipc_wp_t *wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t);
-                    assert(wp != NULL);
-                    cdipc_nd_t *nd = cd_r2nd(hdr, wp->r_nd);
-                    rlist_put(hdr, &hdr->free_wp, &wp->node);
-                    nd->sub_ref &= ~(1 << i);
-                    if (!nd->sub_ref && nd->pub_id < 0)
-                        rlist_put(hdr, &hdr->free, &nd->node);
-                }
-                cdipc_wp_t *wp = rlist_get_entry(hdr, &hdr->free_wp, cdipc_wp_t);
-                nd->sub_ref |= 1 << i;
-                wp->r_nd = cd_nd2r(hdr, nd);
-                rlist_put(hdr, &sub->pend_head, &wp->node);
-            }
-        }
-        if (drop) {
-            dnf_debug(ch->name, "drop\n");
-            rlist_put(hdr, &hdr->free, &nd->node);
-        }
-        cd_cond_broadcast(&hdr->cond);
+    if (hdr->type == CDIPC_SERVICE && !ch->subs[0].max_len) {
+        dnf_error(ch->name, "no replier, sub 0 max_len is 0\n");
+        r = -1;
+        goto out;
     }
 
-    cd_mutex_unlock(&hdr->mutex);
+    nd->abort = false;
+    nd->len_r = 0;
+    for (i = 0; i < hdr->max_sub; i++) {
+        cdipc_sub_t *sub = ch->subs + i;
+        if (!sub->max_len)
+            continue;
+
+        while (sub->pend_head.len >= sub->max_len) { // drop the oldest
+            cdipc_nd_t *old = cdipc_wp2nd(ch, rlist_entry(
+                    (void *)sub->pend_head.rfirst + (ptrdiff_t)hdr, cdipc_wp_t));
+            if (hdr->type == CDIPC_SERVICE && i == 0)
+                old->abort = true; // request dropped before reply
+            nd_sub_release(hdr, old, i);
+            rlist_get(hdr, &sub->pend_head);
+        }
+        // unref before unlink above, link before ref here:
+        // if we die in between, ch_repair gets the ref back from the pend list
+        rlist_put(hdr, &sub->pend_head, &ch->wps[i * hdr->max_nd + nd->id].node);
+        nd->sub_ref |= 1ULL << i;
+        cd_cond_broadcast(&sub->cond);
+    }
+    if (hdr->type == CDIPC_TOPIC)
+        nd_pub_release(hdr, nd); // freed at once if no sub takes it
+
+out:
+    ch_unlock(ch);
     return r;
 }
 
 int cdipc_pub_wait(cdipc_ch_t *ch, cdipc_nd_t *nd,
         const struct timespec *abstime)
 {
-    int i, r = 0;
+    int r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_pub_t *pub = ch->pub;
     assert(ch->role == CDIPC_PUB);
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+    if (ch_lock(ch))
         return -1;
-    }
 
-    while (nd->sub_ref & 1) {
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
-        if (r == ETIMEDOUT) {
-            break;
-        } else if (r != 0) {
-            dnf_error(ch->name, "cond_wait, ret: %d\n", r);
-            break;
-        }
-    }
+    while (!r && (nd->sub_ref & 1))
+        r = ch_wait(ch, &hdr->cond, abstime);
+    if (!r && nd->abort)
+        r = ECANCELED;
 
-    cd_mutex_unlock(&hdr->mutex);
+    ch_unlock(ch);
     return r;
 }
 
 int cdipc_pub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
 {
+    int r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_pub_t *pub = ch->pub;
-    assert(ch->role == CDIPC_PUB && hdr->type == CDIPC_SERVICE);
+    assert(ch->role == CDIPC_PUB);
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+    if (ch_lock(ch))
         return -1;
+
+    if (nd->pub_id == ch->pub->id) {
+        nd_pub_release(hdr, nd);
+    } else {
+        dnf_error(ch->name, "node %d not owned\n", nd->id);
+        r = -1;
     }
-    nd->pub_id = -1;
-    if (!nd->sub_ref && nd->pub_id < 0)
-        rlist_put(hdr, &hdr->free, &nd->node);
-    cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex);
-    return 0;
+
+    ch_unlock(ch);
+    return r;
 }
 
 // for sub:
 
 cdipc_nd_t *cdipc_sub_get(cdipc_ch_t *ch, const struct timespec *abstime)
 {
-    int i, r = 0;
     cdipc_hdr_t *hdr = ch->hdr;
     cdipc_sub_t *sub = ch->sub;
     cdipc_wp_t *wp;
     cdipc_nd_t *nd = NULL;
     assert(ch->role == CDIPC_SUB);
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+    if (ch_lock(ch))
         return NULL;
-    }
 
-pick_node:
-    while (!(wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t))) {
-        r = cd_cond_wait(&hdr->cond, &hdr->mutex, abstime);
-        if (r == ETIMEDOUT) {
-            break;
-        } else if (r != 0) {
-            dnf_error(ch->name, "cond_wait, ret: %d\n", r);
-            break;
+    while (!nd) {
+        if (!(wp = rlist_get_entry(hdr, &sub->pend_head, cdipc_wp_t))) {
+            if (ch_wait(ch, &sub->cond, abstime))
+                break;
+            continue;
         }
-    }
-    if (wp) {
-        nd = cd_r2nd(hdr, wp->r_nd);
-        rlist_put(hdr, &hdr->free_wp, &wp->node);
+        nd = cdipc_wp2nd(ch, wp);
+        if (sub->need_wait)
+            cd_cond_broadcast(&hdr->cond); // pend room for blocked pubs
 
         if (nd->abort) {
-            nd->sub_ref &= ~(1 << sub->id);
-            if (!nd->sub_ref && nd->pub_id < 0)
-                rlist_put(hdr, &hdr->free, &nd->node);
-            nd = NULL;
             df_debug("avoid abort node\n");
-            cd_cond_broadcast(&hdr->cond);
-            goto pick_node;
+            nd_sub_release(hdr, nd, sub->id);
+            nd = NULL;
         }
     }
 
-    cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex);
+    ch_unlock(ch);
     return nd;
 }
 
 int cdipc_sub_ret(cdipc_ch_t *ch, cdipc_nd_t *nd)
 {
-    int i, r = 0;
-    cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_sub_t *sub = ch->sub;
-    assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_SERVICE);
+    assert(ch->role == CDIPC_SUB && ch->hdr->type == CDIPC_SERVICE);
 
-    if (sub->id != 0) {
+    if (ch->sub->id != 0) {
         dnf_error(ch->name, "only allow sub id 0\n");
         return -1;
     }
+    return cdipc_sub_free(ch, nd);
+}
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+// also for service logging subs (id != 0)
+int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
+{
+    int r = 0;
+    cdipc_hdr_t *hdr = ch->hdr;
+    cdipc_sub_t *sub = ch->sub;
+    assert(ch->role == CDIPC_SUB);
+
+    if (ch_lock(ch))
         return -1;
+
+    if (nd->sub_ref & (1ULL << sub->id)) {
+        nd_sub_release(hdr, nd, sub->id);
+    } else {
+        dnf_error(ch->name, "node %d not held\n", nd->id);
+        r = -1;
     }
 
-    nd->sub_ref &= ~(1 << sub->id);
-
-    if (nd->abort) {
-        df_debug("avoid cancelled node\n");
-        if (!nd->sub_ref && nd->pub_id < 0)
-            rlist_put(hdr, &hdr->free, &nd->node);
-    }
-
-    cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex);
+    ch_unlock(ch);
     return r;
 }
 
-int cdipc_sub_free(cdipc_ch_t *ch, cdipc_nd_t *nd)
+int cdipc_sub_cfg(cdipc_ch_t *ch, int max_len, bool need_wait)
 {
     cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_sub_t *sub = ch->sub;
-    assert(ch->role == CDIPC_SUB && hdr->type == CDIPC_TOPIC);
+    assert(ch->role == CDIPC_SUB);
 
-    if (cd_mutex_lock(&hdr->mutex, NULL)) {
-        dnf_error(ch->name, "mutex_lock\n");
+    if (max_len < 0)
         return -1;
-    }
+    if (ch_lock(ch))
+        return -1;
 
-    nd->sub_ref &= ~(1 << sub->id);
-    if (!nd->sub_ref && nd->pub_id < 0)
-        rlist_put(hdr, &hdr->free, &nd->node);
+    ch->sub->max_len = max_len;
+    ch->sub->need_wait = need_wait;
+    cd_cond_broadcast(&hdr->cond); // pubs blocked by need_wait re-check
 
-    cd_cond_broadcast(&hdr->cond);
-    cd_mutex_unlock(&hdr->mutex);
+    ch_unlock(ch);
     return 0;
 }

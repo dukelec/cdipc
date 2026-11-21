@@ -23,7 +23,8 @@ The max data size of each node in each channel are the same.
 
 <img src="docs/img/cdipc-data-structure.svg" style="max-width:100%">
 
-Currently we use a single conditional variable instead of semaphores for simplification.
+Each subscriber waits on its own condition variable, publishers (/requesters) share the one in the header,
+so a wakeup only reaches the side which could make progress.
 
 
 ### Core Procedures
@@ -46,12 +47,18 @@ For use as service, only one replier is allowed.
 2. The requester append the node to replier's node_head (as same as topic, without clear pub reference).
 3. The replier pick up a node.
 4. The replier return data to requester (by simply clear reference map bit).
-5. The requester free the node after read return data.
+5. The requester free the node after read return data (free before reply cancels the request).
+
+`cdipc_pub_put` fails if the replier (sub 0) is not enabled,
+`cdipc_pub_wait` returns `ECANCELED` if the request is dropped or aborted.
 
 
 ### Other Consideration
 
  - We could traversal all nodes to recover lost nodes depend on pub and sub reference, e.g. process exist on error.
+ - If a process dies while holding the channel lock, the next locker takes the lock over and repairs the lists.
+ - All processes of a channel must be in the same PID namespace (e.g. docker `--pid=host`),
+   because the PI-futex identifies the lock owner by its TID.
  - Because we use PI-futex instead of pthread mutex, so communication between user and kernel space is possible.
  - We could use different daemon application to export Topic and Service channel to different interface protocol, e.g. websocket (already support), TCP/UDP socket, unix socket.
 
@@ -60,7 +67,7 @@ For use as service, only one replier is allowed.
 
 We can simply add one or more subscriber to each topic and service dedicated for logging.
 
-Note: The log subscriber in service nerver replier to requester.
+Note: The log subscriber in service never reply to requester, it releases the node by `cdipc_sub_free`.
 
 
 ### Install

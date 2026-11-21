@@ -15,9 +15,11 @@ typedef int cd_mutex_t;
 typedef struct {
     cd_mutex_t  c;
     cd_mutex_t  m;
+    int         w;  // waiters, guarded by the user mutex (wakers must hold it)
 } cd_cond_t;
 
 int cd_mutex_init(cd_mutex_t *m, void *_a);
+// returns EOWNERDEAD (lock held) if taken over from a dead owner
 int cd_mutex_lock(cd_mutex_t *m, const struct timespec *abstime);
 int cd_mutex_unlock(cd_mutex_t *m);
 int cd_mutex_trylock(cd_mutex_t *m);

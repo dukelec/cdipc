@@ -4,6 +4,7 @@
     #include "../../swig_helper.h"
 %}
 
+%include <stdint.i>
 
 struct timespec {
     time_t  tv_sec;

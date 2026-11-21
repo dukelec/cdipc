@@ -1,3 +1,4 @@
+#include <string.h>
 
 #define CLOCK_MONOTONIC 1
 

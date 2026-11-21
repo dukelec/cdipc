@@ -13,9 +13,11 @@
 #include <sys/syscall.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <inttypes.h>
 
 #include <cdipc/cdipc.h>
 #include <cdipc/utils/cd_args.h>
+#include <cdipc/utils/cd_debug.h>
 
 const char *usage_main = \
     "Usage: cdipc [create|unlink|put|get|pend-cfg|dump] ...\n"
@@ -121,7 +123,7 @@ int cmd_create(int argc, char **argv)
 
     if (type != CDIPC_SERVICE)
         max_len_r = 0;
-    df_info("name: %s; type: %d, pub: %d, sub: %d, nd: %d, len: %ld, len_r: %ld\n",
+    df_info("name: %s; type: %d, pub: %d, sub: %d, nd: %d, len: %zu, len_r: %zu\n",
             name, type, max_pub, max_sub, max_nd, max_len, max_len_r);
     return cdipc_create(name, type, max_pub, max_sub, max_nd, max_len, max_len_r);
 }
@@ -165,7 +167,7 @@ int cmd_put(int argc, char **argv)
 
     const char *name = cd_arg_get_def(&ca, "--name", "");
     int id = atol(cd_arg_get_def(&ca, "--id", "0"));
-    float timeout = atof(cd_arg_get_def(&ca, "--timeout", "10"));
+    double timeout = atof(cd_arg_get_def(&ca, "--timeout", "10"));
     const char *dat = cd_arg_get_def(&ca, "--dat", "test msg");
 
     if (cd_arg_get2(&ca, "--help", "-h")) {
@@ -194,28 +196,33 @@ int cmd_put(int argc, char **argv)
     if ((r = cdipc_recover(ch)) > 0) {
         printf("recover: %d\n", r);
     }
+
+    cdipc_hdr_t *hdr = ch->hdr;
+    if (strlen(dat) > hdr->max_len) {
+        df_error("--dat longer than max_len %zu\n", hdr->max_len);
+        return -1;
+    }
     if (!(nd = cdipc_pub_alloc(ch, &abstime))) {
         return -1;
     }
 
-    cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_pub_t *pub = ch->pub;
-
-    strcpy(nd->dat, dat);
     nd->len = strlen(dat);
+    memcpy(nd->dat, dat, nd->len);
 
     if ((r = cdipc_pub_put(ch, nd, &abstime))) {
+        df_error("put: %d\n", r);
+        cdipc_pub_free(ch, nd);
         return -1;
     }
 
     if (hdr->type == CDIPC_SERVICE) {
-        if ((r = cdipc_pub_wait(ch, nd, &abstime))) {
+        r = cdipc_pub_wait(ch, nd, &abstime);
+        if (r)
+            df_error("wait: %d\n", r);
+        else
+            printf("ret: %.*s\n", (int)nd->len_r, (char *)nd->dat + hdr->max_len);
+        if (cdipc_pub_free(ch, nd) || r) // free before reply cancels the request
             return -1;
-        }
-        printf("ret: %s\n", nd->dat + hdr->max_len);
-        if ((r = cdipc_pub_free(ch, nd))) {
-            return -1;
-        }
     }
 
     cdipc_close(ch);
@@ -235,7 +242,7 @@ int cmd_get(int argc, char **argv)
 
     const char *name = cd_arg_get_def(&ca, "--name", "");
     int id = atol(cd_arg_get_def(&ca, "--id", "0"));
-    float timeout = atof(cd_arg_get_def(&ca, "--timeout", "10"));
+    double timeout = atof(cd_arg_get_def(&ca, "--timeout", "10"));
     const char *ret_dat = cd_arg_get_def(&ca, "--ret-dat", "ret msg");
 
     if (cd_arg_get2(&ca, "--help", "-h")) {
@@ -266,24 +273,26 @@ int cmd_get(int argc, char **argv)
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_sub_t *sub = ch->sub;
+    bool replier = hdr->type == CDIPC_SERVICE && id == 0;
+    if (replier && strlen(ret_dat) > hdr->max_len_r) {
+        df_error("--ret-dat longer than max_len_r %zu\n", hdr->max_len_r);
+        return -1;
+    }
 
     if (!(nd = cdipc_sub_get(ch, &abstime))) {
         return -1;
     }
-    printf("get: %s\n", nd->dat);
+    printf("get: %.*s\n", (int)nd->len, (char *)nd->dat);
 
-    if (hdr->type != CDIPC_SERVICE) {
-        if ((r = cdipc_sub_free(ch, nd))) {
-            return -1;
-        }
-    } else {
-        strcpy(nd->dat + hdr->max_len, ret_dat);
+    if (replier) {
         nd->len_r = strlen(ret_dat);
-
-        if ((r = cdipc_sub_ret(ch, nd))) {
-            return -1;
-        }
+        memcpy(nd->dat + hdr->max_len, ret_dat, nd->len_r);
+        r = cdipc_sub_ret(ch, nd);
+    } else { // topic, or logging sub of service
+        r = cdipc_sub_free(ch, nd);
+    }
+    if (r) {
+        return -1;
     }
 
     cdipc_close(ch);
@@ -327,11 +336,9 @@ int cmd_pend_cfg(int argc, char **argv)
         return -1;
     }
 
-    cdipc_hdr_t *hdr = ch->hdr;
-    cdipc_sub_t *sub = ch->sub;
-
-    sub->need_wait = need_wait;
-    sub->max_len = pend_max;
+    if ((r = cdipc_sub_cfg(ch, pend_max, need_wait))) {
+        return -1;
+    }
     cdipc_close(ch);
     return 0;
 }
@@ -369,14 +376,14 @@ int cmd_dump(int argc, char **argv)
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
-    printf("our tid: %08x, futex: %08x, cond: %08x %08x\n",
-            tid, hdr->mutex, hdr->cond.c, hdr->cond.m);
+    printf("our tid: %08x, futex: %08x, busy: %d, cond: %08x %08x, waiters: %d\n",
+            tid, hdr->mutex, hdr->busy, hdr->cond.c, hdr->cond.m, hdr->cond.w);
     cd_mutex_lock(&hdr->mutex, NULL);
 
-    printf("type: %s, max: pub %d, sub %d, nd %d, len %ld\n",
+    printf("type: %s, max: pub %d, sub %d, nd %d, len %zu\n",
             hdr->type == CDIPC_SERVICE ? "service" : "topic",
             hdr->max_pub, hdr->max_sub, hdr->max_nd, hdr->max_len);
-    printf("free: %d, free_wp: %d\n", hdr->free.len, hdr->free_wp.len);
+    printf("free: %d\n", hdr->free.len);
 
     {
         rlist_node_t *rnode, *node;
@@ -392,7 +399,7 @@ int cmd_dump(int argc, char **argv)
         cdipc_nd_t *nd = (void *)ch->nds + ch->nd_len * i;
         if (!nd->sub_ref && nd->pub_id < 0)
             continue;
-        printf("- node %d, sub_ref: %016lx, pub_id: %d (%d), len: %ld, len_r: %ld, abort: %d\n",
+        printf("- node %d, sub_ref: %016" PRIx64 ", pub_id: %d (%d), len: %zu, len_r: %zu, abort: %d\n",
                 nd->id, nd->sub_ref, nd->pub_id, nd->pub_id_bk, nd->len, nd->len_r, nd->abort);
     }
 
@@ -404,12 +411,11 @@ int cmd_dump(int argc, char **argv)
     for (i = 0; i < hdr->max_sub; i++) {
         rlist_node_t *rnode, *node;
         cdipc_sub_t *sub = ch->subs + i;
-        printf("sub %d: tid: %08x, pend: %d, need_wait: %d, max_len: %d: [",
-                sub->id, sub->tid, sub->pend_head.len, sub->need_wait, sub->max_len);
+        printf("sub %d: tid: %08x, pend: %d, need_wait: %d, max_len: %d, waiters: %d: [",
+                sub->id, sub->tid, sub->pend_head.len, sub->need_wait, sub->max_len, sub->cond.w);
         for (rnode = sub->pend_head.rfirst; rnode != NULL; rnode = node->rnext) {
             node = (void *)rnode + (ptrdiff_t)hdr;
-            cdipc_wp_t *wp = rlist_entry(node, cdipc_wp_t);
-            cdipc_nd_t *nd = cd_r2nd(hdr, wp->r_nd);
+            cdipc_nd_t *nd = cdipc_wp2nd(ch, rlist_entry(node, cdipc_wp_t));
             printf("%s%d", rnode == sub->pend_head.rfirst ? "" : ", ", nd->id);
         }
         printf("]\n");
