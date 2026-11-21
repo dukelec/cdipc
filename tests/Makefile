@@ -4,7 +4,7 @@
 # Copyright (c) 2026, DUKELEC, Inc.
 # All rights reserved.
 #
-# Author: Duke Fong <duke@dukelec.com>
+# Author: Duke Fong <d@d-l.io>
 #
 
 CFLAGS = -I.. -O2 -Wall -MMD -MP

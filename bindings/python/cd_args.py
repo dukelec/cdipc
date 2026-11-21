@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # Software License Agreement (MIT License)
 #
-# Copyright (c) 2018, UFactory, Inc.
+# Copyright (c) 2018, DUKELEC, Inc.
 # All rights reserved.
 #
-# Author: Duke Fong <duke@ufactory.cc>
+# Author: Duke Fong <d@d-l.io>
 
 """ cd_args: an arguments parsing library
 

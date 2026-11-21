@@ -4,7 +4,7 @@
  * Copyright (c) 2018, DUKELEC, Inc.
  * All rights reserved.
  *
- * Author: Duke Fong <duke@dukelec.com>
+ * Author: Duke Fong <d@d-l.io>
  */
 
 #include <time.h>
@@ -117,6 +117,7 @@ int cmd_create(int argc, char **argv)
         printf("%s", usage_create);
         exit(-1);
     }
+    cd_args_free(&ca); // values point into argv
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_create);
         return -1;
@@ -147,6 +148,7 @@ int cmd_unlink(int argc, char **argv)
         printf("%s", usage_unlink);
         exit(-1);
     }
+    cd_args_free(&ca); // values point into argv
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_unlink);
         return -1;
@@ -158,7 +160,7 @@ int cmd_unlink(int argc, char **argv)
 
 int cmd_put(int argc, char **argv)
 {
-    int r = 0;
+    int r = -1;
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
     cdipc_nd_t *nd;
@@ -181,6 +183,7 @@ int cmd_put(int argc, char **argv)
         printf("%s", usage_put);
         exit(-1);
     }
+    cd_args_free(&ca); // values point into argv
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_put);
         return -1;
@@ -191,20 +194,21 @@ int cmd_put(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &now);
     us2tv(tv2us(&now) + timeout * 1000000, &abstime);
 
-    if ((r = cdipc_open(ch, name, CDIPC_PUB, id))) {
+    if (cdipc_open(ch, name, CDIPC_PUB, id)) {
         return -1;
     }
-    if ((r = cdipc_recover(ch)) > 0) {
-        printf("recover: %d\n", r);
+    int n = cdipc_recover(ch);
+    if (n > 0) {
+        printf("recover: %d\n", n);
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
     if (strlen(dat) > hdr->max_len) {
         df_error("--dat longer than max_len %zu\n", hdr->max_len);
-        return -1;
+        goto out;
     }
     if (!(nd = cdipc_pub_alloc(ch, &abstime))) {
-        return -1;
+        goto out;
     }
 
     nd->len = strlen(dat);
@@ -213,7 +217,7 @@ int cmd_put(int argc, char **argv)
     if ((r = cdipc_pub_put(ch, nd, &abstime))) {
         df_error("put: %d\n", r);
         cdipc_pub_free(ch, nd);
-        return -1;
+        goto out;
     }
 
     if (hdr->type == CDIPC_SERVICE) {
@@ -222,18 +226,19 @@ int cmd_put(int argc, char **argv)
             df_error("wait: %d\n", r);
         else
             printf("ret: %.*s\n", (int)nd->len_r, (char *)nd->dat + hdr->max_len);
-        if (cdipc_pub_free(ch, nd) || r) // free before reply cancels the request
-            return -1;
+        if (cdipc_pub_free(ch, nd)) // free before reply cancels the request
+            r = -1;
     }
 
+out:
     cdipc_close(ch);
-    return 0;
+    return r ? -1 : 0;
 }
 
 
 int cmd_get(int argc, char **argv)
 {
-    int r = 0;
+    int r = -1;
     cdipc_ch_t _ch = { 0 };
     cdipc_ch_t *ch = &_ch;
     cdipc_nd_t *nd;
@@ -256,6 +261,7 @@ int cmd_get(int argc, char **argv)
         printf("%s", usage_get);
         exit(-1);
     }
+    cd_args_free(&ca); // values point into argv
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_get);
         return -1;
@@ -266,22 +272,23 @@ int cmd_get(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &now);
     us2tv(tv2us(&now) + timeout * 1000000, &abstime);
 
-    if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
+    if (cdipc_open(ch, name, CDIPC_SUB, id)) {
         return -1;
     }
-    if ((r = cdipc_recover(ch)) > 0) {
-        printf("recover: %d\n", r);
+    int n = cdipc_recover(ch);
+    if (n > 0) {
+        printf("recover: %d\n", n);
     }
 
     cdipc_hdr_t *hdr = ch->hdr;
     bool replier = hdr->type == CDIPC_SERVICE && id == 0;
     if (replier && strlen(ret_dat) > hdr->max_len_r) {
         df_error("--ret-dat longer than max_len_r %zu\n", hdr->max_len_r);
-        return -1;
+        goto out;
     }
 
     if (!(nd = cdipc_sub_get(ch, &abstime))) {
-        return -1;
+        goto out; // timeout
     }
     printf("get: %.*s\n", (int)nd->len, (char *)nd->dat);
 
@@ -292,12 +299,10 @@ int cmd_get(int argc, char **argv)
     } else { // topic, or logging sub of service
         r = cdipc_sub_free(ch, nd);
     }
-    if (r) {
-        return -1;
-    }
 
+out:
     cdipc_close(ch);
-    return 0;
+    return r ? -1 : 0;
 }
 
 
@@ -325,6 +330,7 @@ int cmd_pend_cfg(int argc, char **argv)
         printf("%s", usage_pend_cfg);
         exit(-1);
     }
+    cd_args_free(&ca); // values point into argv
     if (!strlen(name)) {
         df_error("--name must specified\n\n%s", usage_pend_cfg);
         return -1;
@@ -333,15 +339,12 @@ int cmd_pend_cfg(int argc, char **argv)
     printf("set %s ch%d: need_wait: %d, pend_max: %d\n",
             name, id, need_wait, pend_max);
 
-    if ((r = cdipc_open(ch, name, CDIPC_SUB, id))) {
+    if (cdipc_open(ch, name, CDIPC_SUB, id)) {
         return -1;
     }
-
-    if ((r = cdipc_sub_cfg(ch, pend_max, need_wait))) {
-        return -1;
-    }
+    r = cdipc_sub_cfg(ch, pend_max, need_wait);
     cdipc_close(ch);
-    return 0;
+    return r ? -1 : 0;
 }
 
 
@@ -367,6 +370,7 @@ int cmd_dump(int argc, char **argv)
         printf("%s", usage_dump);
         exit(-1);
     }
+    cd_args_free(&ca); // values point into argv
     if (!name || !strlen(name)) {
         df_error("--name must specified\n\n%s", usage_dump);
         return -1;
@@ -423,6 +427,7 @@ int cmd_dump(int argc, char **argv)
     }
 
     cd_mutex_unlock(&hdr->mutex);
+    cdipc_close(ch);
     return 0;
 }
 

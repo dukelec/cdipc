@@ -4,7 +4,7 @@
 # Copyright (c) 2026, DUKELEC, Inc.
 # All rights reserved.
 #
-# Author: Duke Fong <duke@dukelec.com>
+# Author: Duke Fong <d@d-l.io>
 
 """End-to-end test of tools/cdipc_ws_server.py, run by: make test-ws
 needs LD_LIBRARY_PATH and PYTHONPATH pointing to the build tree

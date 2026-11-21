@@ -4,7 +4,7 @@
  * Copyright (c) 2018, DUKELEC, Inc.
  * All rights reserved.
  *
- * Author: Duke Fong <duke@dukelec.com>
+ * Author: Duke Fong <d@d-l.io>
  */
 
 #include <sys/mman.h>
@@ -163,19 +163,19 @@ int cdipc_create(const char *name, cdipc_type_t type, int max_pub, int max_sub,
 
     ch->fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR | O_TRUNC, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
-        dnf_error(ch->name, "shm_open: %s, ret code: %d\n", name, ch->fd);
+        dnf_error(ch->name, "shm_open: %s\n", strerror(errno));
         return ch->fd;
     }
 
     if (ftruncate(ch->fd, ch->map_len) == -1) {
-        dnf_error(ch->name, "ftruncate to size %zu\n", ch->map_len);
+        dnf_error(ch->name, "ftruncate to size %zu: %s\n", ch->map_len, strerror(errno));
         goto exit_free_fd;
     }
 
     ch->hdr = (cdipc_hdr_t*) mmap(NULL, ch->map_len,
             PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
     if (ch->hdr == MAP_FAILED) {
-        dnf_error(ch->name, "mmap\n");
+        dnf_error(ch->name, "mmap: %s\n", strerror(errno));
         goto exit_free_fd;
     }
     memcpy(ch->hdr, &hdr_tmp, sizeof(cdipc_hdr_t));
@@ -228,7 +228,7 @@ int cdipc_unlink(const char *name)
     int r;
 
     if ((r = shm_unlink(name))) {
-        dnf_error(name, "shm_unlink\n");
+        dnf_error(name, "shm_unlink: %s\n", strerror(errno));
         return -1;
     }
     return 0;
@@ -258,7 +258,7 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
 
     ch->fd = shm_open(name, O_RDWR, S_IRWXU | S_IRWXG);
     if (ch->fd < 0) {
-        dnf_error(ch->name, "shm_open, ret code: %d\n", ch->fd);
+        dnf_error(ch->name, "shm_open: %s\n", strerror(errno));
         return ch->fd;
     }
 
@@ -271,7 +271,7 @@ int cdipc_open(cdipc_ch_t *ch, const char *name,
     hdr = ch->hdr = (cdipc_hdr_t*) mmap(NULL, ch->map_len,
             PROT_READ | PROT_WRITE, MAP_SHARED, ch->fd, 0);
     if (hdr == MAP_FAILED) {
-        dnf_error(ch->name, "mmap\n");
+        dnf_error(ch->name, "mmap: %s\n", strerror(errno));
         ch->hdr = NULL;
         goto exit_close;
     }
